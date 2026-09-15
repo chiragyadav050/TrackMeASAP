@@ -1,0 +1,342 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ==========================================================================
+   LIFE OS DESIGN SYSTEM
+   --------------------------------------------------------------------------
+   Direction: "quiet instrument" — a dense, fast, professional tool in the
+   lineage of Linear and Raycast. The interface should recede so the user's
+   life is the only thing with visual weight.
+
+   Rules this system enforces:
+     • Depth comes from layered surfaces and hairline borders, not shadows.
+       Shadows appear only on true overlays (popover, dialog, sheet).
+     • Colour is semantic. The brand indigo means "active / primary action"
+       and nothing else; status colours always ship with an icon or label so
+       meaning never rests on hue alone.
+     • Radii stay tight (10px base). Large pill-like corners read as
+       consumer-app, not instrument.
+     • Hierarchy comes from type scale and weight contrast, not from boxing
+       everything in a card.
+
+   Neutrals carry a slight cool cast (hue 265) rather than being pure grey —
+   it reads as engineered rather than washed out, and keeps the indigo accent
+   feeling native instead of bolted on.
+   ========================================================================== */
+
+@theme inline {
+  /* --- shadcn contract: colour ------------------------------------------ */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* --- Life OS additions ------------------------------------------------ */
+  /* Elevation as surfaces rather than shadows. */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  /* A second, softer border for internal dividers. */
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  /* Brand accent for text and marks, tuned per theme for contrast. */
+  --color-brand: var(--brand);
+  --color-brand-text: var(--brand-text);
+  --color-brand-muted: var(--brand-muted);
+  /* Status. Always paired with an icon or word in the UI. */
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-danger: var(--danger);
+  --color-danger-muted: var(--danger-muted);
+
+  /* --- Typography ------------------------------------------------------- */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /* A scale with real contrast at the top and tight steps in the body range,
+     so a dashboard can be dense without becoming flat. */
+  --text-display: 2.5rem;
+  --text-display--line-height: 1.08;
+  --text-display--letter-spacing: -0.032em;
+  --text-title: 1.5rem;
+  --text-title--line-height: 1.2;
+  --text-title--letter-spacing: -0.021em;
+  --text-heading: 1.0625rem;
+  --text-heading--line-height: 1.35;
+  --text-heading--letter-spacing: -0.013em;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.55;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.45;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.35;
+  --text-label--letter-spacing: 0.02em;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
+  --radius-3xl: calc(var(--radius) + 18px);
+  --radius-4xl: calc(var(--radius) + 26px);
+
+  /* --- Motion ----------------------------------------------------------- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /* --- Layout ----------------------------------------------------------- */
+  --spacing-sidebar: 15rem;
+  --spacing-header: 3.5rem;
+}
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.994 0.0015 265);
+  --foreground: oklch(0.205 0.012 265);
+
+  --surface: oklch(1 0 0);
+  --surface-raised: oklch(1 0 0);
+  --surface-sunken: oklch(0.972 0.003 265);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.205 0.012 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.205 0.012 265);
+
+  /* 4.7:1 against white — passes AA for the button label. */
+  --primary: oklch(0.49 0.196 275);
+  --primary-foreground: oklch(0.99 0.002 275);
+
+  --secondary: oklch(0.968 0.003 265);
+  --secondary-foreground: oklch(0.255 0.012 265);
+
+  --muted: oklch(0.968 0.003 265);
+  /* 4.7:1 against the page background. */
+  --muted-foreground: oklch(0.48 0.014 265);
+
+  --accent: oklch(0.955 0.005 265);
+  --accent-foreground: oklch(0.225 0.012 265);
+
+  --brand: oklch(0.49 0.196 275);
+  --brand-text: oklch(0.47 0.19 275);
+  --brand-muted: oklch(0.955 0.022 275);
+
+  --success: oklch(0.47 0.118 152);
+  --success-muted: oklch(0.955 0.03 152);
+  --warning: oklch(0.52 0.128 72);
+  --warning-muted: oklch(0.962 0.042 82);
+  --danger: oklch(0.505 0.202 27);
+  --danger-muted: oklch(0.958 0.026 27);
+  --destructive: oklch(0.505 0.202 27);
+
+  --border: oklch(0.915 0.005 265);
+  --border-subtle: oklch(0.945 0.004 265);
+  --border-strong: oklch(0.858 0.007 265);
+  --input: oklch(0.905 0.005 265);
+  --ring: oklch(0.49 0.196 275);
+
+  --sidebar: oklch(0.978 0.003 265);
+  --sidebar-foreground: oklch(0.255 0.012 265);
+  --sidebar-primary: oklch(0.49 0.196 275);
+  --sidebar-primary-foreground: oklch(0.99 0.002 275);
+  --sidebar-accent: oklch(0.938 0.005 265);
+  --sidebar-accent-foreground: oklch(0.205 0.012 265);
+  --sidebar-border: oklch(0.915 0.005 265);
+  --sidebar-ring: oklch(0.49 0.196 275);
+
+  --chart-1: oklch(0.49 0.196 275);
+  --chart-2: oklch(0.58 0.132 215);
+  --chart-3: oklch(0.6 0.13 165);
+  --chart-4: oklch(0.65 0.14 85);
+  --chart-5: oklch(0.58 0.17 15);
+}
+
+.dark {
+  /* Not pure black: a near-black with a cool cast holds hairline borders and
+     layered surfaces far better, and avoids OLED smearing on scroll. */
+  --background: oklch(0.168 0.009 265);
+  --foreground: oklch(0.962 0.003 265);
+
+  --surface: oklch(0.198 0.01 265);
+  --surface-raised: oklch(0.228 0.011 265);
+  --surface-sunken: oklch(0.145 0.008 265);
+
+  --card: oklch(0.198 0.01 265);
+  --card-foreground: oklch(0.962 0.003 265);
+  --popover: oklch(0.222 0.011 265);
+  --popover-foreground: oklch(0.962 0.003 265);
+
+  /* Same lightness as light mode so the AA-passing white label holds. */
+  --primary: oklch(0.505 0.196 275);
+  --primary-foreground: oklch(0.99 0.002 275);
+
+  --secondary: oklch(0.252 0.011 265);
+  --secondary-foreground: oklch(0.955 0.003 265);
+
+  --muted: oklch(0.252 0.011 265);
+  /* 6.3:1 against the dark page background. */
+  --muted-foreground: oklch(0.715 0.012 265);
+
+  --accent: oklch(0.268 0.012 265);
+  --accent-foreground: oklch(0.968 0.003 265);
+
+  --brand: oklch(0.505 0.196 275);
+  --brand-text: oklch(0.79 0.125 276);
+  --brand-muted: oklch(0.285 0.055 275);
+
+  --success: oklch(0.76 0.135 155);
+  --success-muted: oklch(0.275 0.045 155);
+  --warning: oklch(0.8 0.13 80);
+  --warning-muted: oklch(0.29 0.05 80);
+  --danger: oklch(0.71 0.165 24);
+  --danger-muted: oklch(0.292 0.06 24);
+  --destructive: oklch(0.71 0.165 24);
+
+  --border: oklch(1 0 0 / 9%);
+  --border-subtle: oklch(1 0 0 / 5.5%);
+  --border-strong: oklch(1 0 0 / 16%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.62 0.17 276);
+
+  --sidebar: oklch(0.152 0.009 265);
+  --sidebar-foreground: oklch(0.905 0.004 265);
+  --sidebar-primary: oklch(0.505 0.196 275);
+  --sidebar-primary-foreground: oklch(0.99 0.002 275);
+  --sidebar-accent: oklch(0.242 0.012 265);
+  --sidebar-accent-foreground: oklch(0.975 0.003 265);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.62 0.17 276);
+
+  --chart-1: oklch(0.66 0.175 276);
+  --chart-2: oklch(0.7 0.125 215);
+  --chart-3: oklch(0.72 0.125 165);
+  --chart-4: oklch(0.78 0.13 85);
+  --chart-5: oklch(0.68 0.16 15);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply font-sans;
+    -webkit-text-size-adjust: 100%;
+    /* Stop the page shifting sideways when a scrollbar appears/disappears
+       between routes — a small thing that makes navigation feel solid. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    @apply bg-background text-body text-foreground antialiased;
+    font-feature-settings:
+      "cv02" 1,
+      "cv03" 1,
+      "cv04" 1;
+  }
+
+  /* One focus treatment everywhere, always visible, never removed. */
+  :focus-visible {
+    @apply rounded-sm ring-2 ring-ring/70 ring-offset-2 ring-offset-background outline-none;
+  }
+
+  /* Headings opt into the display scale explicitly; no implicit sizing that
+     would fight the utility classes used in components. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-heading text-balance text-foreground;
+  }
+
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+@layer utilities {
+  /* Overlay elevation. The only place shadows are permitted. */
+  .shadow-overlay {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--border-strong) 100%, transparent),
+      0 10px 32px -12px rgb(0 0 0 / 0.28),
+      0 4px 10px -6px rgb(0 0 0 / 0.16);
+  }
+
+  /* A very fine top highlight that gives raised surfaces an edge without a
+     visible shadow. Reads as glass, not as a drop shadow. */
+  .surface-edge {
+    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 0.05);
+  }
+
+  /* Subtle grain used behind the marketing hero and the empty dashboard, so
+     large flat areas have texture instead of feeling unfinished. */
+  .texture-grid {
+    background-image:
+      linear-gradient(
+        to right,
+        color-mix(in oklab, var(--border-subtle) 100%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in oklab, var(--border-subtle) 100%, transparent) 1px,
+        transparent 1px
+      );
+    background-size: 56px 56px;
+  }
+
+  .text-label-caps {
+    @apply text-label font-medium uppercase;
+  }
+}
+
+/* Honour the OS reduced-motion setting everywhere, including inside
+   third-party components we do not control. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

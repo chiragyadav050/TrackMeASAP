@@ -1,0 +1,422 @@
+===============================================================================
+LIFE OS — PHASE 3 TEST CHECKLIST AND RESULTS  (Academics)
+===============================================================================
+
+Run date      : 2026-09-15 21:56 IST
+Machine       : macOS (darwin 23.3.0, arm64)
+Node          : v24.13.1
+pnpm          : 9.15.0
+PostgreSQL    : 17.11 (Homebrew, local service)
+Next.js       : 16.3.5
+Prisma        : 7.10.0
+Clerk         : @clerk/nextjs 7.9.2
+
+Every result below was produced by actually running the command shown.
+Nothing is asserted that was not executed.
+
+===============================================================================
+SETUP REQUIREMENTS
+===============================================================================
+
+  pnpm install
+  createdb life_os                  # dev database
+  createdb -O life_os life_os_test  # integration tests DELETE rows
+  pnpm db:migrate                   # applies all 3 migrations
+  pnpm db:test:setup                # same, against TEST_DATABASE_URL
+
+  .env needs DATABASE_URL and TEST_DATABASE_URL (both real and working here)
+  plus Clerk keys (PLACEHOLDERS here — see BLOCKED).
+
+===============================================================================
+SUMMARY
+===============================================================================
+
+  Phase 1 + 2 regression (run FIRST) ........... PASS
+  Prisma schema validation ..................... PASS
+  Migration (dev + test databases) ............. PASS
+  Partial unique index (raw SQL) ............... PASS — verified in pg_indexes
+  Type checking ................................ PASS
+  Lint ......................................... PASS
+  Format check ................................. PASS
+  Unit tests ................................... PASS  (311/311, 17 files)
+  Integration tests ............................ PASS  (199/199, 8 files)
+  Production build ............................. PASS  (27 routes)
+  Live route verification ...................... PASS  (12 protected routes)
+  E2E — API level .............................. PASS  (5/5)
+  E2E — browser level .......................... BLOCKED (62 skipped)
+
+  Test count grew 303 -> 510 executed (311 unit + 199 integration).
+  Phase 3 added 103 unit and 104 integration tests.
+
+  ONE BLOCKER, unchanged since Phase 1: browser E2E needs real Clerk keys.
+
+===============================================================================
+1. PHASE 1 + 2 REGRESSION  (run BEFORE any Phase 3 work)
+===============================================================================
+
+COMMAND : pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
+          && pnpm test:integration && pnpm exec prisma migrate status
+RESULT  : PASS — everything green before a single Phase 3 line landed.
+
+  Test Files  14 passed (14)   Tests  208 passed (208)   [unit]
+  Test Files   4 passed  (4)   Tests   95 passed  (95)   [integration]
+  Database schema is up to date!
+
+RE-RUN AFTER PHASE 3, against the production build (port 3100):
+
+  Public surfaces
+    GET /                       -> 200
+    GET /sign-in                -> 200
+    GET /sign-up                -> 200
+    GET /does-not-exist         -> 404   (custom 404 intact)
+    GET /api/health             -> 200
+       {"success":true,"data":{"status":"ok","database":"reachable"},"error":null}
+
+  Protected surfaces — all 12 still redirect anonymous visitors (307)
+    /tasks  /today  /overview  /settings
+    /academics  /academics/semesters  /academics/subjects
+    /academics/assignments  /academics/exams  /academics/attendance
+    /academics/study  /academics/calendar
+
+  Security headers: 5 / 5 present. Server log: no errors.
+
+  All 208 Phase 1+2 unit tests and 95 integration tests still pass inside the
+  new totals. NOTHING in Phase 1 or 2 was rewritten.
+
+  Phase 2 files EXTENDED (additively, no signature changed):
+    • prisma/schema.prisma   — Task.subjectId became a real FK (SetNull);
+                               Task gained an `assignment` back-relation
+    • today-workspace.tsx    — renders the academic panel
+    • overview-grid.tsx      — academic tile now shows real data
+    • command-palette.tsx    — searches academics alongside tasks
+
+  NOTE ON A FALSE ALARM: an initial live-route check showed the academic
+  sub-pages 404ing. Cause was a STALE SERVER from an earlier Playwright run
+  still holding port 3100 (EADDRINUSE in the start log); the new build never
+  bound. After killing it, all 12 routes verified correctly. No application
+  defect — recorded here because the first reading looked like one.
+
+===============================================================================
+2. DATABASE
+===============================================================================
+
+COMMAND : pnpm db:validate
+RESULT  : PASS — The schema at prisma/schema.prisma is valid 🚀
+
+COMMAND : pnpm exec prisma migrate dev --name add_academics --create-only
+          (migration then hand-edited, see below)
+          pnpm exec prisma migrate dev
+RESULT  : PASS — 20260915143505_add_academics applied.
+
+COMMAND : pnpm exec prisma migrate status
+RESULT  : PASS — 3 migrations found. Database schema is up to date!
+
+COMMAND : pnpm db:test:setup
+RESULT  : PASS — all 3 migrations applied to life_os_test.
+
+NEW MODELS (11 academic + 1 attachment; 16 models total in the schema):
+  Semester, Subject, ClassSchedule, ClassSession, AttendanceRecord,
+  Assignment, Assessment, Exam, ExamTopic, StudySession, AcademicNote,
+  Attachment
+
+NEW ENUMS:
+  SemesterStatus, ClassSessionType, ClassSessionStatus, AttendanceStatus,
+  AssignmentStatus, SubmissionStatus, AssessmentType, AssessmentStatus,
+  ExamType, ExamStatus, TopicImportance
+
+HAND-WRITTEN SQL appended to the migration:
+
+  CREATE UNIQUE INDEX "semesters_one_current_per_profile"
+    ON "semesters" ("profile_id") WHERE "is_current";
+
+  A PARTIAL unique index, which Prisma's schema language cannot express. A
+  plain UNIQUE(profile_id, is_current) would also forbid a second NON-current
+  semester, which is exactly backwards.
+
+VERIFIED IN THE LIVE DATABASE (psql pg_indexes):
+  CREATE UNIQUE INDEX semesters_one_current_per_profile
+    ON public.semesters USING btree (profile_id) WHERE is_current
+
+  …and verified BEHAVIOURALLY by an integration test that bypasses the
+  service entirely and asserts the database itself rejects a second current
+  semester.
+
+===============================================================================
+3. TYPE SAFETY
+===============================================================================
+
+COMMAND : pnpm typecheck        (tsc --noEmit)
+RESULT  : PASS — exit code 0, no output
+
+  strict mode on; no `any` in application code; typedRoutes enforced across
+  all 11 new academic routes.
+
+===============================================================================
+4. QUALITY
+===============================================================================
+
+COMMAND : pnpm lint             (eslint)
+RESULT  : PASS — exit code 0, no output
+
+COMMAND : pnpm format:check     (prettier --check .)
+RESULT  : PASS — All matched files use Prettier code style!
+
+===============================================================================
+5. UNIT TESTS
+===============================================================================
+
+COMMAND : pnpm test             (vitest run)
+RESULT  : PASS
+
+   Test Files  17 passed (17)
+        Tests  311 passed (311)
+
+PHASE 3 ADDITIONS (103 new tests):
+
+  tests/unit/attendance-calculator.test.ts .... 40 tests  [ATTENDANCE MATHS]
+     The number students make real decisions on, so every rule and edge is
+     pinned:
+       • percentage; EXCUSED excluded from BOTH numerator and denominator
+       • zero eligible classes -> null, NOT 0%
+       • canMiss: the brief's 41/50 @ 75% -> 4, and an invariant test proving
+         the next absence really does break the threshold
+       • mustAttend: the brief's 6/10 @ 75% -> 6, with the mirror invariant
+         that one fewer falls short
+       • exactly-at-threshold (3/4 @ 75%) -> canMiss 0, mustAttend 0
+       • 100% requirement -> canMiss 0; once broken, mustAttend null
+         (unreachable, rather than advising something impossible)
+       • FLOATING POINT: 45/60 evaluates to 74.99999999999999 in IEEE-754 and
+         is correctly treated as exactly 75%; 44/60 is NOT rounded into safety
+       • risk bands incl. UNKNOWN, and CRITICAL only when unrecoverable
+       • invariant: canMiss and mustAttend are never both positive
+
+  tests/unit/academic-derive.test.ts ........... 36 tests
+     • assignment overdue: all-day due TODAY is not overdue; due YESTERDAY is;
+       SUBMITTED closes it even while work says IN_PROGRESS; COMPLETED,
+       CANCELLED and archived never overdue; verdict follows the user's zone
+     • isAssignmentOpen: completed-but-unsubmitted is still open
+     • marks: graded == has a mark; bonus marks (22/20) reported, not clamped;
+       zero maximum -> null rather than a division by zero
+     • preparation: the brief's 5-of-8 -> 62.5%; no topics -> null
+       ("tracking not started"), explicitly different from 0%
+     • importance does NOT weight the percentage (asserted both ways)
+     • study duration formatting, per-subject totals, distinct-day counting
+       (a 00:30 session counts toward its own local day)
+     • semester progress, including a null for a malformed range
+
+  tests/unit/academic-priority.test.ts ......... 27 tests  [PRIORITY ENGINE]
+     • overdue > today > tomorrow > 2–3 days > this week > later > undated
+     • the overdue bonus is CAPPED, so a year-old assignment cannot
+       permanently outrank this week's work
+     • URGENT > HIGH > MEDIUM > LOW, but proximity still beats priority
+     • THE BRIEF'S CASE: an exam in 5 days at 20% prepared outranks the same
+       exam at 95%, and the reason chip says "20% prepared"
+     • the preparation gap bites harder as the exam approaches, and not at all
+       outside the 14-day window
+     • CRITICAL attendance outranks an assignment due today
+     • safe attendance is never surfaced at all
+     • ranking is stable and total — input order does not change output
+     • adapters carry academic state across correctly
+
+===============================================================================
+6. INTEGRATION TESTS  (real PostgreSQL, real services, no mocks)
+===============================================================================
+
+COMMAND : pnpm test:integration
+RESULT  : PASS
+
+   Test Files  8 passed (8)
+        Tests  199 passed (199)
+
+  Runs against a dedicated life_os_test database. The setup file REFUSES to
+  start unless TEST_DATABASE_URL is set, differs from DATABASE_URL, and
+  contains "test".
+
+PHASE 3 ADDITIONS (104 new tests):
+
+  tests/integration/academics-core.test.ts ......... 22 tests
+     Semester CRUD; DATE-ONLY round-trip (5 January stays 5 January);
+     THE ONE-CURRENT-SEMESTER RULE:
+       • setting current clears the previous
+       • setting current also marks it ACTIVE
+       • THE DATABASE ITSELF rejects a second current semester (bypasses the
+         service entirely to prove the partial index, not just the transaction)
+       • two profiles may each have one — the index is per-profile, not global
+     Archive refuses on the current semester (CONFLICT); delete cascades to
+     subjects; subject CRUD, per-subject thresholds, search, and the proof
+     that DELETING A SUBJECT DOES NOT DELETE THE TASKS DONE FOR IT
+     (Task.subjectId is SetNull).
+
+  tests/integration/academics-attendance.test.ts ... 20 tests  [TIMETABLE]
+     • a weekly rule generates 5 Mondays across a 4-week range, each at the
+       right wall-clock time in the student's zone (10:00 IST = 04:30Z)
+     • GENERATION IS IDEMPOTENT — re-running creates 0, skips 5
+     • effectiveFrom/effectiveTo let a timetable change MID-TERM cleanly:
+       3 sessions under the old rule, 2 under the new, at the new time
+     • cancelling ONE Monday leaves the rule and the other four untouched
+     • cancelling also removes attendance already marked for that day
+     • deleting a rule KEEPS past occurrences and their attendance
+     • marking completes the class; re-marking corrects rather than duplicates
+     • marking a CANCELLED class is refused (CONFLICT)
+     • clearing returns the class to "not recorded" — not to absent
+     • aggregation: excused struck from the percentage (8/10, not 11/13)
+     • future SCHEDULED classes flip CRITICAL to AT_RISK
+     • OVERALL ATTENDANCE POOLS CLASSES rather than averaging percentages
+       (1/1 + 5/9 gives 60%, not 77.8%)
+
+  tests/integration/academics-work.test.ts ......... 36 tests
+     Assignments: semester denormalised from subject; zone-converted
+     deadlines; and the core rule —
+       • WORK STATUS AND SUBMISSION MOVE INDEPENDENTLY
+       • completing does not submit; submitting does not complete
+       • an unfinished assignment can still be submitted (a real student case)
+       • bonus marks accepted
+     Assignment -> Task: a LINKED task, not a copy (subject, deadline,
+     estimate, priority carried); idempotent; COMPLETING THE TASK DOES NOT
+     SUBMIT THE ASSIGNMENT; editing mirrors schedulable facts only; deleting
+     the assignment leaves the task.
+     Views: OVERDUE excludes anything submitted; all-day due TODAY not
+     overdue; GRADED means having a mark.
+     Exams: zone-converted start; preparation null until topics exist; the
+     brief's 5-of-8 -> 62.5%; days remaining in the student's zone; topic
+     ordering and reorder validation; deleting an exam cascades topics but
+     SPARES logged study time.
+     Study: duration and derived end instant; defaults to today in the user's
+     zone; refuses a topic belonging to another exam; weekly totals count
+     DISTINCT DAYS, not sessions.
+     Dashboards: real figures; a profile with no semester gets empty values,
+     not invented ones; Today slice is safe and empty without a semester.
+
+  tests/integration/academics-authorization.test.ts  26 tests  [SECURITY]
+     Two real profiles; EVERY operation on all eleven entities invoked with
+     the wrong one:
+       guards       semester, subject, assignment, exam, topic
+       semester     update / archive / delete / setCurrent
+       subject      create-under-foreign-semester, MOVE-into-foreign-semester,
+                    update / archive / delete
+       timetable    schedule create/update/delete; generation only ever
+                    materialises the caller's own rules
+       attendance   mark / clear / setStatus / delete / read summary
+       assignment   every mutation + createTaskForAssignment + reads
+       exam/topic   create / complete / update / delete / reorder / delete-exam
+       reorder      rejects a list smuggling in a foreign topic id
+       study        refuses a foreign subject, AND a foreign exam or topic even
+                    when the subject is legitimately owned
+       notes        create / update / delete / list
+       dashboards   overview and search leak nothing
+       cascade      deleting a profile removes all its academic records and
+                    leaves the other profile intact
+     Each asserts BOTH that the call refuses AND that the victim's row is
+     unchanged. NOT_FOUND, never FORBIDDEN, so the API is not an id oracle.
+
+===============================================================================
+7. PRODUCTION BUILD
+===============================================================================
+
+COMMAND : pnpm build
+RESULT  : PASS — no errors, no warnings
+
+  ✓ Compiled successfully
+    Finished TypeScript
+  27 routes, including all 11 new academic routes:
+    /academics                      /academics/assignments
+    /academics/attendance           /academics/calendar
+    /academics/exams                /academics/exams/[examId]
+    /academics/semesters            /academics/study
+    /academics/subjects             /academics/subjects/[subjectId]
+
+===============================================================================
+8. E2E TESTS
+===============================================================================
+
+COMMAND : pnpm test:e2e --project=chromium
+RESULT  : 5 passed, 62 skipped
+
+  API-LEVEL — tests/e2e/api.spec.ts — 5/5 PASSED (no browser session needed)
+    [PASS] health endpoint reports the database reachable (real query)
+    [PASS] health endpoint is never cached
+    [PASS] Clerk webhook rejects an unsigned payload without disclosing why
+    [PASS] baseline security headers present; X-Powered-By absent
+    [PASS] no server secret appears in the served HTML
+
+  BROWSER-LEVEL — 62 SKIPPED (see BLOCKED)
+    smoke.spec.ts      25  Phase 1 journeys
+    tasks.spec.ts      23  Phase 2 journeys
+    academics.spec.ts  14  Phase 3 journeys — written and complete:
+        semester      create -> set current -> drives the dashboard;
+                      only one semester current at a time
+        subject       create -> open detail; shows "No classes marked"
+                      rather than 0%
+        attendance    honest empty state without a timetable; the calculator
+                      reproduces 41/50 @ 75% -> 82% and "can miss 4 more"
+        assignment    create -> appears in list with work AND submission shown
+                      separately; CONVERT TO TASK -> appears on Today WITHOUT
+                      being submitted; submission recorded independently
+        exam          create -> "tracking not started" -> add 4 topics ->
+                      0% · 0/4 -> tick one -> 25% · 1/4
+        study         log 45 minutes -> weekly total updates
+        integration   academic deadline reaches Today and Overview; ⌘K finds
+                      academic records
+        responsive    no horizontal overflow at 390 and 768
+
+===============================================================================
+BLOCKED — WHAT IS MISSING AND HOW TO FIX IT
+===============================================================================
+
+BLOCKED ITEM : Browser-level E2E (62 tests). Unchanged since Phase 1.
+
+WHAT IS MISSING
+  Real Clerk API keys. The committed .env holds syntactically valid
+  placeholders that no Clerk instance stands behind.
+
+WHY
+  A Clerk development key makes the middleware perform a handshake: with no
+  __clerk_db_jwt cookie the browser is redirected to the instance's Frontend
+  API host. That host does not exist, so Clerk answers
+  {"errors":[{"message":"Invalid host","code":"host_invalid"}]} and the
+  browser never reaches the app. Server-side requests are unaffected, which is
+  why the 5 API tests pass against the real server and database.
+
+HOW TO FIX
+  1. Create an application at https://dashboard.clerk.com
+  2. Copy both API keys into .env
+  3. pnpm test:e2e     — all 67 run, no code change needed
+  tests/e2e/clerk-env.ts detects a real instance by decoding the publishable
+  key and un-skips automatically.
+
+WHAT WAS NOT DONE, AND WHY
+  Clerk was NOT mocked. The rules that actually matter here — attendance
+  arithmetic, the one-current-semester constraint, cross-tenant isolation,
+  the assignment/task boundary — are covered FOR REAL by 103 unit tests and
+  104 integration tests against a live database.
+
+===============================================================================
+NOT VERIFIED IN THIS ENVIRONMENT
+===============================================================================
+
+  * Interactive behaviour of the Phase 3 React components in a browser.
+    The build compiles them and the data layer beneath has 104 integration
+    tests, but dialog flows, the attendance marking buttons and the topic
+    checklist have not been exercised by a real browser. They are covered by
+    the 14 written-but-skipped E2E tests above.
+  * Firefox / WebKit — configured, only Chromium installed.
+  * Lighthouse / Core Web Vitals — no deployment exists.
+  * Visual regression screenshots.
+  * Manual screen-reader testing — automated assertions only.
+  * File attachments — deliberately unimplemented. The `Attachment` table and
+    `StorageProvider` interface exist; no provider is registered, no upload
+    endpoint or UI exists, and `getStorageProvider()` throws.
+
+===============================================================================
+MANUAL SETUP STILL REQUIRED
+===============================================================================
+
+  1. REQUIRED for browser E2E and sign-in — Clerk keys in .env.
+  2. On a fresh clone: createdb -O life_os life_os_test && pnpm db:test:setup
+  3. OPTIONAL — pnpm exec playwright install firefox webkit
+  4. NOTE — this directory is still not a git repository. .gitignore is
+     correct; run `git init` when you want history.
+
+===============================================================================
+END OF PHASE 3 TEST REPORT
+===============================================================================

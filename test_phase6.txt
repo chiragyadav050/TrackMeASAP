@@ -1,0 +1,281 @@
+LIFE OS — PHASE 6 TEST REPORT (REMINDERS, NOTIFICATIONS, CALENDAR, WORKERS)
+===========================================================================
+
+Date:        2026-09-15
+Phase:       6 — Reminders + Notifications + Calendar + Background workers
+Verdict:     COMPLETE, and the first phase whose BACKGROUND PATH was verified
+             END TO END against live infrastructure. Browser UI verification
+             remains blocked (see §8).
+
+
+1. WHAT WAS BUILT
+-----------------
+
+Data model (migration 20260915180806_add_reminders_notifications_calendar):
+
+  Reminder               remindAt (absolute), recurrence, weekdays[],
+                         recurUntil, status, snoozedUntil, lastFiredAt, and
+                         optional task/event/habit links (all SetNull)
+  Notification           kind, channel, status, dedupeKey, scheduledFor,
+                         sentAt, readAt, attempts, lastError
+                         UNIQUE (profileId, dedupeKey)
+  NotificationPreference UNIQUE (profileId, kind, channel)
+  NotificationSettings   quiet hours + daily limit, one row per profile
+  CalendarEvent          startAt/endAt/isAllDay/isBusy, source projection
+                         fields, cancelledAt
+
+Code:
+
+  src/services/schedule/schedule.derive.ts     pure scheduling intelligence
+  src/services/schedule/schedule.schema.ts     Zod schemas (isomorphic)
+  src/services/schedule/reminder.service.ts    reminders + firing
+  src/services/schedule/notification.service.ts delivery + idempotency
+  src/services/schedule/calendar.service.ts    event mutations
+  src/services/schedule/calendar.query.ts      unified timeline, conflicts
+  src/server/queue.ts                          BullMQ connections (lazy)
+  src/server/worker.ts                         sweep + flush jobs
+  scripts/worker.ts                            `pnpm worker`
+  scripts/sweep-once.ts                        `pnpm worker:once`
+  src/features/schedule/*                      actions + 5 UI components
+  src/types/schedule.ts                        boundary DTOs
+
+Dependencies added: bullmq 6.3.6, ioredis 6.0.0, tsx 4.23.13 (dev).
+
+
+2. TEST RESULTS
+---------------
+
+  Unit (Phase 6 only)          43 / 43   passed
+  Integration (Phase 6 only)   47 / 47   passed
+  ----------------------------------------------
+  Unit (whole project)        425 / 425  passed   (was 382 after Phase 5)
+  Integration (whole project) 346 / 346  passed   (was 299 after Phase 5)
+  E2E, environment-independent 52 / 52   passed
+  E2E, browser                416        SKIPPED — see §8
+
+  pnpm typecheck    clean
+  pnpm lint         clean (0 errors, 0 warnings)
+  pnpm format:check clean
+  pnpm build        succeeded; /calendar in the route table
+  prisma migrate    applied to dev and test databases
+
+
+3. THE DECISIONS THE TESTS DEFEND
+---------------------------------
+
+3.1 Quiet hours that WRAP MIDNIGHT
+  22:00–07:00 is the normal case for sleep, and the naive test
+  `minute >= start && minute <= end` is false for EVERY minute of it. That bug
+  delivers notifications at 3am. The wrap is handled explicitly and tested
+  from both sides, at both boundaries, and for the degenerate zero-length
+  window (which silences nothing, so one mis-set field cannot mute the app
+  permanently).
+
+3.2 Held, never dropped
+  A notification blocked by quiet hours or the daily limit stays PENDING and
+  is re-evaluated by the flush job. A silenced reminder that never arrives is
+  worse than a late one. Verified end to end: fired at 03:00 → PENDING; flushed
+  at 09:00 → SENT.
+
+3.3 Urgent bypasses everything
+  An exam starting in ten minutes is exactly what notifications exist for, so
+  urgent alerts ignore both quiet hours and the daily limit.
+
+3.4 Recurrence is CALENDAR arithmetic
+  "Monthly" means the same date next month, not +30 days; "yearly" survives a
+  leap year; the clock time is preserved. WEEKDAYS walks forward at most seven
+  days and returns null if no day is selected, rather than looping forever.
+
+3.5 A deadline is a MOMENT, not a block
+  Assignment and task due dates appear on the calendar with `isBusy: false`.
+  Marking them busy would make every due date conflict with the time you
+  booked to do it in — exactly backwards. Tested: a day with a deadline and no
+  meetings reads as eight hours free.
+
+3.6 Back-to-back is not a conflict
+  Half-open intervals. A 10:00 finish and a 10:00 start do not overlap.
+  Flagging consecutive meetings would make the warning noise users ignore.
+
+3.7 Free-time gaps merge overlapping blocks first
+  Two overlapping meetings are ONE busy period; treating them separately would
+  invent a negative-length gap. Slots under the minimum are dropped — a
+  seven-minute gap is not usable time.
+
+3.8 One timeline, no duplication
+  Classes, assignments, exams, tasks and personal events are PROJECTED into a
+  single entry shape at read time. Nothing is copied into `calendar_events`,
+  so editing a class in Academics cannot leave a stale calendar copy. Only the
+  user's own events are editable on the calendar.
+
+
+4. LIVE END-TO-END VERIFICATION (the part that is NOT blocked)
+--------------------------------------------------------------
+
+Redis was started (`brew services start redis`, `redis-cli ping` → PONG) and
+the real BullMQ worker was run against the real Postgres database.
+
+  4.1 A reminder due one minute in the past was seeded for a clearly marked
+      test profile (`user_test_worker_probe`).
+
+  4.2 `pnpm worker` started, registered its repeatable jobs, and the
+      cron-scheduled sweep fired on the next minute boundary. Actual log line:
+
+        2026-09-15T18:18:43.396Z INFO Workers started
+          {"queues":["reminders","notifications"]}
+        2026-09-15T18:19:00.393Z INFO Reminder sweep complete
+          {"examined":1,"fired":1,"deduped":0,"delivered":1,"failed":0}
+
+  4.3 The notification was verified in the database: status SENT, sentAt
+      18:19:00.387Z, dedupeKey
+      `reminder:<id>:2026-09-15T18:17:32.864Z`.
+
+  4.4 IDEMPOTENCY PROVEN LIVE. The reminder was reset to SCHEDULED at the same
+      instant and swept again. Result: `{"examined":1,"fired":0,"deduped":1}`
+      and the total notification count stayed at ONE. A retried or duplicated
+      worker cannot produce a second alert.
+
+  4.5 Test data removed afterwards (`deletedProbeProfiles: 1`).
+
+  The `/api/health` endpoint now reports worker availability as two booleans —
+  never a URL, queue depth or version, which would turn the probe into a recon
+  tool. Asserted in tests/e2e/api.spec.ts.
+
+
+5. SECURITY / OWNERSHIP
+-----------------------
+
+tests/integration/schedule-authorization.test.ts — 14 tests. Reminders are the
+highest-stakes surface in the app for isolation: a leak here does not merely
+show someone else's data on a screen, it PUSHES it to a device.
+
+  - Reminder and event guards return NOT_FOUND, never FORBIDDEN.
+  - Reads: reminders, notifications, unread count and the calendar are all
+    empty for another user.
+  - Another user's events do NOT consume your free time and cannot create
+    conflicts on your calendar. Two users booked at the same hour is not a
+    conflict for either.
+  - Notification settings are per profile: one user enabling quiet hours does
+    not silence anyone else.
+  - `markAllRead` with an explicit id belonging to another user marks nothing
+    and returns 0.
+  - Grafting refused: a reminder cannot be attached to another user's task,
+    event or habit, and their OWN reminder cannot be re-pointed at one.
+  - THE WORKER RESPECTS OWNERSHIP. A sweep over two profiles' reminders
+    delivers exactly one notification to each, with no crossover.
+  - The same `dedupeKey` for two different profiles is NOT a collision — the
+    unique index is (profileId, dedupeKey), so two users can legitimately hold
+    the same logical alert.
+  - Worker logs deliberately exclude reminder titles and messages. A worker
+    log is not the place for the contents of someone's private reminders.
+  - Unauthenticated GET of /calendar returns non-200 with no user data.
+
+
+6. RELIABILITY
+--------------
+
+  - Retries are exponential (2s base, 3 attempts) rather than fixed: a Redis
+    blip recovers in milliseconds, but an upstream outage should not be
+    hammered every second.
+  - Notification delivery stops after MAX_ATTEMPTS (5) and is marked FAILED —
+    an endlessly retrying send would fill the queue and hide real failures.
+    Tested.
+  - The sweep isolates failures PER REMINDER: one profile with bad data cannot
+    stop every other user's reminders from firing.
+  - `findDueReminders` is bounded (default 100) so one sweep cannot pull an
+    unbounded backlog into memory after an outage.
+  - REDIS IS OPTIONAL. `src/server/queue.ts` never connects at import time, and
+    `enqueue()` returns `{queued: false}` rather than throwing when Redis is
+    absent. The whole app is usable without a worker; only scheduled firing
+    stops. `pnpm worker:once` runs the same sweep without Redis at all.
+  - Queues are created lazily behind the same pattern as the Prisma client, so
+    `next build` succeeds on a machine with no Redis.
+
+
+7. DEFECTS FOUND AND FIXED DURING THIS PHASE
+--------------------------------------------
+
+  1. **BullMQ rejects `:` in queue names.** Names were `life-os:reminders`;
+     the worker crashed at startup with "Queue name cannot contain :". Fixed
+     by using BullMQ's supported `prefix` option instead, which is the correct
+     way to namespace several apps in one Redis. Found by RUNNING the worker,
+     not by reading the code.
+
+  2. **`server-only` threw in the worker process.** Its published entry point
+     throws outside the Next.js bundler — including in a process that is about
+     as server-side as code gets. Fixed with a documented stub aliased through
+     `tsconfig.worker.json`, so the real guard still protects the application
+     build while the worker imports the same services the web app uses rather
+     than a parallel copy that could drift.
+
+  3. **Exam projection assumed an `endAt` column.** Exams store `startAt` plus
+     `durationMinutes`. Caught by typecheck; fixed to compute the end, and to
+     skip exams with no scheduled time rather than placing them at the epoch.
+
+  4. A Phase 1 test asserted the health endpoint's exact response shape. Adding
+     worker status is an intended Phase 6 change, so the assertion was widened
+     — and strengthened, by additionally asserting the response contains no
+     Redis URL or port.
+
+
+8. HONEST LIMITATIONS — WHAT COULD NOT BE VERIFIED
+--------------------------------------------------
+
+BROWSER UI TESTING REMAINS BLOCKED. Unchanged from Phases 4–5:
+
+  - Clerk's publishable key is a placeholder, so the development handshake
+    redirects any browser to a Frontend API host that does not exist.
+  - `list_connected_browsers` returns `[]`, so manual driving is unavailable.
+
+  Clerk was NOT mocked. The 15 Phase 6 browser specs in
+  tests/e2e/calendar.spec.ts are written and will run unchanged once real keys
+  exist.
+
+  UNVERIFIED BY EXECUTION: visual rendering of the calendar grid, the
+  notification popover in a real browser, dark mode, the 320/768/1440
+  breakpoints, keyboard navigation on the new surfaces.
+
+  NOTE WHAT IS **NOT** IN THIS LIST. Unlike Phases 4 and 5, the core of this
+  phase — reminder firing, recurrence, idempotency, delivery throttling and
+  the worker itself — WAS verified against live Redis and live Postgres (§4).
+  That is the part that would have been hardest to trust on unit tests alone,
+  and it is proven.
+
+REMAINING ENVIRONMENT GAPS:
+  - No Telegram bot token   → Phase 7 live verification will be blocked
+  - No Gemini API key       → Phase 8 live verification will be blocked
+
+
+9. REGRESSION — PHASES 1-5
+--------------------------
+
+  Unit          425 / 425  passed
+  Integration   346 / 346  passed
+  E2E (runnable) 52 / 52   passed
+  Build, typecheck, lint, format — all clean
+
+No earlier-phase file was rewritten. Edits outside src/services/schedule and
+src/features/schedule were additive: the notification bell added to the app
+header (with its data fetched once in the app layout), worker status added to
+the health endpoint, and the calendar placeholder page replaced with the real
+surface.
+
+
+10. COMPLETION RATING
+---------------------
+
+  Data model and migrations           100%
+  Derive / intelligence layer         100%  (43 unit tests)
+  Service layer and ownership         100%  (47 integration tests)
+  Query layer and unified timeline    100%
+  Server actions                      100%
+  Background workers                  100%  VERIFIED LIVE against Redis (§4)
+  Idempotency guarantee               100%  VERIFIED LIVE (§4.4)
+  UI implementation                   100%  built, typed, linted, builds
+  UI verified in a real browser          0%  BLOCKED — §8
+
+  Overall Phase 6:  ~93% verified.
+
+  Higher than Phases 4 and 5 because the hardest-to-trust part of this phase —
+  the background worker — was run for real rather than merely tested.
+
+Phase 7 may begin.

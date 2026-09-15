@@ -1,0 +1,223 @@
+LIFE OS — PHASE 9 TEST REPORT (AI PLANNING)
+===========================================
+
+Date:        2026-09-16
+Phase:       9 — Daily/weekend planner, workload, procrastination, recovery,
+                 exam mode, weekly review
+Verdict:     COMPLETE AND FULLY VERIFIED. No part of this phase is blocked.
+
+
+1. THE ARCHITECTURAL DECISION
+-----------------------------
+
+**PLANNING DOES NOT USE A MODEL.**
+
+A daily plan is scheduling arithmetic — fit these items into those gaps,
+respecting priority, energy and deadlines — not a language problem. Building
+it as arithmetic buys three things a generated plan cannot have:
+
+  1. It is DETERMINISTIC. The same inputs always give the same plan, so it can
+     be tested, debugged, and trusted not to shuffle between refreshes.
+  2. It WORKS WITHOUT AN API KEY. A student whose quota runs out mid-semester
+     does not lose the ability to plan their day.
+  3. It is VERIFIABLE. Every figure on the Plan page is a sum the user could
+     do themselves, and every block carries the reason it landed there.
+
+Phase 8's AI layer may later PHRASE a plan. It does not compute one.
+
+This is also why Phase 9 is the first phase since Phase 3 with NO BLOCKED
+VERIFICATION: there is no external dependency to be blocked on.
+
+
+2. WHAT WAS BUILT
+-----------------
+
+  src/services/planning/planning.derive.ts   pure engines (no I/O at all)
+  src/services/planning/planning.query.ts    real data → engines
+  src/features/planning/components/*         the Plan surface
+  src/app/(app)/plan/page.tsx                the page
+
+Engines: buildDailyPlan, assessWorkload, detectProcrastination,
+buildRecoveryPlan, buildExamMode, buildWeeklyReview.
+
+No new database tables. Everything is computed from data Phases 2–6 already
+store — which is itself the point: a planner that needed its own schema would
+be storing a derived truth that decays.
+
+
+3. TEST RESULTS
+---------------
+
+  Unit (Phase 9 only)          39 / 39   passed
+  Integration (Phase 9 only)   24 / 24   passed
+  ----------------------------------------------
+  Unit (whole project)        503 / 503  passed   (was 464 after Phase 8)
+  Integration (whole project) 426 / 426  passed   (was 402 after Phase 8)
+  E2E, environment-independent 68 / 68   passed
+
+  pnpm typecheck    clean
+  pnpm lint         clean
+  pnpm format:check clean
+  pnpm build        succeeded; /plan in the route table
+
+
+4. THE SCHEDULING RULES, AND WHY
+--------------------------------
+
+4.1 Priority order comes from the EXISTING engine
+  The planner does not re-decide what matters; it takes the order Phase 2's
+  priority engine already produced. One source of truth for "what is most
+  important", not two that can disagree.
+
+4.2 It never books over a real commitment
+  Slots come from Phase 6's free-time engine, which already excludes classes,
+  exams and events. VERIFIED AGAINST THE DATABASE: a 09:00–12:00 lecture
+  moves the first block to 12:00 and drops available time from 480 to 300
+  minutes.
+
+4.3 A deadline does not consume planning time
+  Due dates are moments, not blocks (Phase 6's `isBusy: false`). Verified: a
+  task due at 15:00 still leaves the full 480 minutes free to schedule in.
+
+4.4 HIGH-energy work prefers peak hours — but is still scheduled
+  If no peak slot is free it lands anyway, because an unscheduled important
+  task helps nobody. The REASON records which happened, and the UI shows it.
+
+4.5 Blocks are capped at 90 minutes with a 10-minute gap
+  Nobody does three hours of one thing. Long items are SPLIT across slots
+  rather than dropped, and never into fragments under 15 minutes — a
+  seven-minute fragment is interruption, not work.
+
+4.6 Anything that does not fit is returned WITH A REASON
+  `unplanned` is part of the output, not a silent omission. Silently dropping
+  work would make the plan a lie. Tested for both "no free time at all" and
+  "no gap long enough left".
+
+4.7 Deterministic and non-mutating
+  Tested explicitly: identical inputs produce identical plans, and the
+  caller's array is never sorted in place.
+
+
+5. HONESTY IN THE INTELLIGENCE
+------------------------------
+
+This phase had the most opportunities to produce comforting nonsense. Each was
+refused, and each refusal is tested.
+
+5.1 OVERCOMMITTED is said plainly
+  A 12-hour day in an 8-hour window reports "Overcommitted — today needs more
+  hours than it has. Something will have to move." Not "ambitious", not
+  "a full day ahead!".
+
+5.2 Recovery mode NAMES what to drop
+  A plan that only says "prioritise" leaves the hardest decision with the
+  person who is already overwhelmed. `buildRecoveryPlan` returns an explicit
+  `focus` list and an explicit `defer` list, and promises only as many focus
+  items as the day can actually hold. Tested that every item lands in one list
+  or the other — nothing silently disappears.
+
+5.3 Exam mode warns instead of recommending an impossible day
+  40 topics in 2 days is 600 minutes a day. The engine computes that honestly
+  and then says "more than you have — pick the topics that matter most",
+  rather than presenting a ten-hour schedule as advice.
+
+5.4 Procrastination detection is conservative and descriptive
+  One reschedule is a person with a changing day, not a problem. The signal
+  fires at THREE reschedules, or two on something older than a fortnight —
+  patterns rather than moments. Counts come from the ACTIVITY LOG, the record
+  of what actually happened, not a counter that could drift.
+
+  The UI heading is "Keeps getting pushed" with the subtitle "What happened,
+  not why. Only you know that." The system reports behaviour; it does not
+  diagnose motivation.
+
+5.5 Weekly observations are facts, not prose
+  Each observation is generated from a THRESHOLD on a real figure and contains
+  the figure. "Less than half of what was due got done (25%)." A quiet week
+  says "A steady week, with nothing unusual in the numbers" rather than
+  manufacturing an insight.
+
+5.6 Null is not zero
+  A week with nothing due reports `completionRate: null` and renders "Nothing
+  was due" — not 0%. Same for habit consistency with no scheduled habits.
+
+5.7 An empty day says so
+  No tasks due means `isEmpty: true` and "Nothing to plan… That is a real
+  answer, not an empty screen." No sample blocks, ever.
+
+
+6. CROSS-USER ISOLATION
+-----------------------
+
+Verified inside the planning layer specifically, because a planner reads from
+six other modules at once and is exactly where a leak could hide:
+
+  - Another user's URGENT task does not appear in this user's plan.
+  - Another user's all-day busy event does not reduce this user's free time
+    (asserted numerically: still 480 minutes).
+  - Another user's reschedules do not raise this user's procrastination
+    signals — and do correctly raise their own.
+  - Another user's imminent exam does not activate this user's exam mode.
+  - Another user's task creation does not appear in this user's weekly review.
+
+
+7. DEFECTS FOUND AND FIXED DURING THIS PHASE
+--------------------------------------------
+
+  1. `DailyPlan["unplanned"]` was typed readonly and then pushed to. Caught by
+     typecheck; fixed by building a mutable local and returning it as the
+     readonly type, rather than casting the readonly away.
+
+  2. A test used `sortOrder` on ExamTopic, which is `position`. Caught by the
+     integration run against the real schema — the kind of mistake that only a
+     real database catches.
+
+
+8. LIMITATIONS
+--------------
+
+  BROWSER UI: the Plan page compiles, type-checks, lints and builds, but has
+  not been driven in a browser — the Clerk placeholder key still blocks that,
+  as in Phases 4–8.
+
+  NOT A LIMITATION, worth stating: no part of the planning logic is unverified.
+  There is no external service to be blocked on, so unlike Phases 7 and 8
+  there is no "works up to the network boundary" caveat here. The engines and
+  the query layer are exercised end to end against a real database.
+
+  DELIBERATE SIMPLIFICATIONS, all stated in code rather than hidden:
+   - A task with no estimate is assumed to take 30 minutes.
+   - An exam topic is assumed to take 30 minutes.
+   - "Peak hours" are the profile's own stated study window, not inferred from
+     behaviour. Inferring it would need months of data Life OS does not yet
+     have, and guessing would be worse than using what the user told us.
+
+
+9. REGRESSION — PHASES 1-8
+--------------------------
+
+  Unit          503 / 503  passed
+  Integration   426 / 426  passed
+  E2E (runnable) 68 / 68   passed
+  Build, typecheck, lint, format — all clean
+
+No earlier-phase file was modified. Additions were the Plan nav entry and its
+pinned navigation assertion.
+
+
+10. COMPLETION RATING
+---------------------
+
+  Planning engines                    100%  (39 unit tests)
+  Query layer against real data       100%  (24 integration tests)
+  Cross-user isolation                100%
+  Works with no AI configured         100%  explicitly asserted
+  UI implementation                   100%  built, typed, linted, builds
+  UI verified in a real browser          0%  BLOCKED — Clerk
+
+  Overall Phase 9:  ~95% verified.
+
+  The highest of any phase so far, because this one has no external dependency
+  to be blocked on.
+
+Phase 10 may begin.

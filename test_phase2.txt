@@ -1,0 +1,399 @@
+===============================================================================
+LIFE OS — PHASE 2 TEST CHECKLIST AND RESULTS  (Tasks + Today)
+===============================================================================
+
+Run date      : 2026-09-15 19:30 IST
+Machine       : macOS (darwin 23.3.0, arm64)
+Node          : v24.13.1
+pnpm          : 9.15.0
+PostgreSQL    : 17.11 (Homebrew, local service)
+Next.js       : 16.3.5
+Prisma        : 7.10.0
+Clerk         : @clerk/nextjs 7.9.2
+
+Every result below was produced by actually running the command shown.
+Nothing is asserted that was not executed.
+
+===============================================================================
+SUMMARY
+===============================================================================
+
+  Phase 1 regression ........................... PASS
+  Prisma schema validation ..................... PASS
+  Migration (dev + test databases) ............. PASS
+  Type checking ................................ PASS
+  Lint ......................................... PASS
+  Format check ................................. PASS
+  Unit tests ................................... PASS  (208/208, 14 files)
+  Integration tests ............................ PASS  (95/95, 4 files)
+  Production build ............................. PASS
+  E2E — API level .............................. PASS  (5/5)
+  E2E — browser level .......................... BLOCKED (48 skipped)
+
+  Test count grew 86 -> 303 executed (208 unit + 95 integration).
+
+  ONE BLOCKER, unchanged from Phase 1: browser E2E needs real Clerk keys.
+  Detail in the BLOCKED section at the end.
+
+===============================================================================
+1. PHASE 1 REGRESSION  (run FIRST, before any Phase 2 work)
+===============================================================================
+
+COMMAND : pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
+          && pnpm exec prisma migrate status
+RESULT  : PASS — all Phase 1 checks green before a single Phase 2 line landed.
+
+  Test Files  8 passed (8)
+       Tests  86 passed (86)
+  Database schema is up to date!
+
+RE-RUN AFTER PHASE 2 (against the production build, port 3100):
+
+  Public surfaces
+    GET /                    -> 200   (landing page)
+    GET /sign-in             -> 200
+    GET /sign-up             -> 200
+    GET /does-not-exist      -> 404   (custom 404 intact)
+    GET /api/health          -> 200
+       {"success":true,"data":{"status":"ok","database":"reachable"},"error":null}
+
+  Protected surfaces — all still redirect anonymous visitors
+    GET /tasks               -> 307  location: /sign-in
+    GET /today               -> 307  location: /sign-in
+    GET /overview            -> 307  location: /sign-in
+    GET /settings            -> 307  location: /sign-in
+
+  Security headers on every response: 5 / 5 present
+    X-Content-Type-Options, X-Frame-Options, Referrer-Policy,
+    Permissions-Policy, Strict-Transport-Security
+
+  Phase 1 unit tests: all 86 still pass inside the 208 total.
+  Nothing in Phase 1 was rewritten. Two Phase 1 files were EXTENDED:
+    • src/lib/time.ts          — added zoned day-boundary helpers
+    • src/server/action.ts     — added createAuthenticatedCommand alongside
+                                 the existing createAuthenticatedAction
+  Both additive; no existing signature changed.
+
+===============================================================================
+2. DATABASE
+===============================================================================
+
+COMMAND : pnpm db:validate
+RESULT  : PASS
+  The schema at prisma/schema.prisma is valid 🚀
+
+COMMAND : pnpm exec prisma migrate dev --name add_tasks_subtasks_activity
+RESULT  : PASS
+  Applying migration `20260915124032_add_tasks_subtasks_activity`
+  Your database is now in sync with your schema.
+
+COMMAND : pnpm exec prisma migrate status
+RESULT  : PASS
+  2 migrations found in prisma/migrations
+  Database schema is up to date!
+
+COMMAND : pnpm db:test:setup      (migrations against TEST_DATABASE_URL)
+RESULT  : PASS — both migrations applied to life_os_test.
+
+MIGRATION CONTENTS (22 CREATE/ALTER statements):
+  Enums   : TaskStatus, TaskPriority, EnergyLevel, TaskCategory,
+            ActivityAction
+  Tables  : tasks, subtasks, activity_events
+  Indexes : tasks    (profileId, archivedAt, status, dueAt)
+                     (profileId, archivedAt, priority, dueAt)
+                     (profileId, archivedAt, createdAt)
+                     (profileId, completedAt)
+                     (profileId, subjectId)   <- Phase 3 groundwork
+                     (profileId, projectId)   <- Phase 4 groundwork
+            subtasks (taskId, position), (profileId)
+            activity (profileId, createdAt), (entityType, entityId)
+  FKs     : all three tables -> profiles(id) ON DELETE CASCADE
+
+  Indexes were chosen from the queries in task.query.ts, not applied blindly
+  to every column.
+
+===============================================================================
+3. TYPE SAFETY
+===============================================================================
+
+COMMAND : pnpm typecheck        (tsc --noEmit)
+RESULT  : PASS — exit code 0, no output
+
+  strict mode on; no `any` in application code; typedRoutes still enforced.
+
+  Issues found and fixed during the phase:
+    * Prisma client was stale after the schema change -> pnpm db:generate.
+    * `as const` status filters produced readonly tuples Prisma rejects ->
+      replaced with one shared `Prisma.EnumTaskStatusFilter` constant.
+    * typedRoutes cannot verify a runtime query string -> confined to a single
+      `toHref()` helper in the filter bar rather than casting at each call.
+    * Bulk result narrowing: checked `status !== "success"` rather than
+      `=== "error"`, which left `idle` in the union.
+
+===============================================================================
+4. QUALITY
+===============================================================================
+
+COMMAND : pnpm lint             (eslint)
+RESULT  : PASS — exit code 0, no output
+
+  SIX React Compiler violations were found and FIXED PROPERLY, not suppressed:
+    1-3. Phase 1 carry-over (use-mounted, mobile-nav, onboarding form)
+    4.   command-palette.tsx — search effect wrote state synchronously.
+         Rewritten so results/`isSearching` are DERIVED and every write
+         happens inside the debounce/promise callback.
+    5.   command-palette.tsx — reset-on-close effect. Replaced with the
+         adjust-state-during-render pattern.
+    6.   task-dialog.tsx — `setIsLoading(true)` inside the fetch effect.
+         `isLoading` is now derived ("editing a task whose detail has not
+         arrived"), so no state is written synchronously in an effect.
+
+COMMAND : pnpm format:check     (prettier --check .)
+RESULT  : PASS
+  All matched files use Prettier code style!
+
+===============================================================================
+5. UNIT TESTS
+===============================================================================
+
+COMMAND : pnpm test             (vitest run)
+RESULT  : PASS
+
+   Test Files  14 passed (14)
+        Tests  208 passed (208)
+     Duration  ~0.9s
+
+PHASE 2 ADDITIONS (122 new tests):
+
+  tests/unit/time-zones.test.ts ............ 29 tests   [TIMEZONE LOGIC]
+     The foundation everything else rests on. Deliberately uses the cases
+     that break naive implementations:
+       • Asia/Kolkata  (+05:30) — defeats whole-hour arithmetic
+       • Asia/Kathmandu(+05:45) — defeats half-hour arithmetic too
+       • America/New_York — both DST transitions, verifying a local day is
+         exactly 23h on spring-forward and 25h on fall-back
+       • Pacific/Auckland — a zone ahead of UTC
+     Covers startOfLocalDay, endOfLocalDay, addLocalDays (calendar days, not
+     86,400,000 ms), instantFromLocalTime, localDayDifference,
+     formatOverdueBy, formatDueDateLabel, formatDuration.
+
+  tests/unit/task-derive.test.ts ........... 27 tests   [OVERDUE LOGIC]
+     • an all-day task due TODAY is NOT overdue at 14:00
+     • an all-day task due YESTERDAY is overdue
+     • a timed task past its instant is overdue
+     • completed / cancelled / archived tasks are never overdue
+     • the same instant is overdue in one zone and not another
+     • isDueToday / wasCompletedToday follow the user's local day
+     • buildTaskLabels emits finished zone- and locale-correct strings
+     • subtaskProgress, including divide-by-zero on an empty checklist
+
+  tests/unit/task-prioritization.test.ts ... 22 tests   [PRIORITY ENGINE]
+     • overdue > due today > tomorrow > this week > later > undated
+     • URGENT > HIGH > MEDIUM > LOW, all else equal
+     • urgency beats priority: a LOW overdue task outranks an idle URGENT one
+     • the overdue bonus is CAPPED, so an ancient forgotten task cannot
+       permanently outrank what is actually on fire
+     • in-progress favoured (+120); blocked penalised (-400)
+     • quick-win bonus never outweighs real urgency
+     • ranking is stable and total — input order does not change output
+     • selectNextBestAction never recommends a BLOCKED task
+     • the recommendation depends on the USER's zone, not the server's
+
+  tests/unit/task-schema.test.ts ........... 25 tests   [VALIDATION]
+     • title required, trimmed, length-bounded
+     • an emptied optional field normalises to undefined, not ""
+     • estimate coerced from FormData strings and bounded 1..1440
+     • a time without a date is rejected
+     • 2026-02-29 rejected (not a leap year); "24:00" and "12:60" rejected
+     • unknown enum values rejected
+     • reschedule rejects both-a-preset-and-a-date, and neither
+     • bulk rejects an empty selection and one over MAX_BULK_TASKS
+     • SET_PRIORITY without a priority does not fall through as a no-op
+
+  tests/unit/task-shortcuts.test.ts ........ 7 tests    [KEYBOARD]
+     isTypingTarget correctly identifies input/textarea/select/contenteditable
+     — the guard that stops a bare `c` firing mid-sentence. Shortcut table has
+     no duplicate bindings.
+
+  tests/unit/task-badges.test.tsx .......... 12 tests   [ACCESSIBILITY]
+     Asserts the colour-independence promise:
+       • every priority is announced in TEXT, not only coloured
+       • the four priorities map to four DISTINCT icons
+       • overdue state is stated in words ("2 days overdue")
+       • subtask progress exposes a labelled progressbar with correct
+         aria-valuenow / min / max
+
+===============================================================================
+6. INTEGRATION TESTS  (real PostgreSQL, real service layer, no mocks)
+===============================================================================
+
+COMMAND : pnpm test:integration
+RESULT  : PASS
+
+   Test Files  4 passed (4)
+        Tests  95 passed (95)
+     Duration  ~1.7s
+
+  Runs against a dedicated life_os_test database. The setup file REFUSES to
+  start unless TEST_DATABASE_URL is set, differs from DATABASE_URL, and
+  contains "test" — these tests delete rows, and a misconfigured URL pointing
+  at the dev database would destroy real data silently.
+
+  tests/integration/task-crud.test.ts ............ 26 tests
+     create (all fields, enum defaults, ordering), resolveDueAt zone
+     conversion, update, clear-due, completion stamping, reopen clearing
+     completedAt, all five reschedule presets resolved against a fixed
+     Tuesday, archive/unarchive round-trip, archived rows excluded from
+     statistics, delete cascading to subtasks, audit row surviving deletion.
+
+  tests/integration/task-authorization.test.ts ... 20 tests  [SECURITY]
+     THE MOST IMPORTANT FILE IN THIS PHASE. Two real profiles; every
+     operation invoked with the WRONG one:
+       reads       listTasks / getTaskDetail / searchTasks / requireOwnedTask
+       mutations   updateTask, setTaskCompletion, setTaskPriority,
+                   rescheduleTask, setTaskArchived, deleteTask,
+                   getSubtaskProgress
+       subtasks    createSubtask (foreign parent), setSubtaskCompletion,
+                   updateSubtask, deleteSubtask, reorderSubtasks
+       bulk        foreign ids ignored, not applied; mixed own+foreign
+                   affects only the caller's; no activity logged for
+                   untouched rows
+       cascade     deleting a profile removes its tasks/subtasks/activity and
+                   leaves the other profile intact
+     Each asserts BOTH that the call refuses AND that the victim's row is
+     byte-for-byte unchanged. NOT_FOUND is asserted rather than FORBIDDEN, so
+     the API cannot be used as an id oracle.
+     Also proves reorderSubtasks rejects a list smuggling in a foreign id.
+
+  tests/integration/task-today.test.ts ........... 30 tests
+     Today grouping into exactly one bucket each; all-day-due-today not
+     overdue; timed-earlier-today overdue with "5 hours overdue"; completed
+     moving to completedToday; greeting/date from the profile's zone; next
+     best action leading correctly and considering beyond today; statistics
+     (active / dueTodayTotal / completedToday / overdue / percent);
+     completion percent clamped at 100; every status, date, priority,
+     category and search filter; all sort orders.
+     Every query is passed a FIXED `now` — a test that reads the real clock
+     is a test that fails at midnight.
+
+  tests/integration/task-bulk-subtasks.test.ts ... 19 tests
+     Bulk COMPLETE / REOPEN / ARCHIVE / SET_PRIORITY / RESCHEDULE; scoping to
+     submitted ids; one activity event per affected task; zero for unknown
+     ids. Subtask ordering, completion stamping, progress, rename, delete,
+     reorder, and reorder rejecting an incomplete list.
+     Explicitly asserts: COMPLETING EVERY SUBTASK DOES NOT COMPLETE THE
+     PARENT — a documented product decision, pinned so changing it must be
+     deliberate.
+
+===============================================================================
+7. PRODUCTION BUILD
+===============================================================================
+
+COMMAND : pnpm build
+RESULT  : PASS — no errors, no warnings
+
+  ✓ Compiled successfully in 1028ms
+    Finished TypeScript in 1682ms
+  ✓ Generating static pages (17/17)
+
+  19 routes, unchanged in shape from Phase 1 — /tasks and /today are now
+  functional rather than placeholders.
+
+===============================================================================
+8. E2E TESTS
+===============================================================================
+
+COMMAND : pnpm test:e2e --project=chromium
+RESULT  : 5 passed, 48 skipped
+
+  Runs against a real `next build && next start`.
+
+  API-LEVEL — tests/e2e/api.spec.ts — 5/5 PASSED (no browser session needed)
+    [PASS] health endpoint reports the database reachable (real query)
+    [PASS] health endpoint is never cached
+    [PASS] Clerk webhook rejects an unsigned payload without disclosing why
+    [PASS] baseline security headers present; X-Powered-By absent
+    [PASS] no server secret appears in the served HTML
+
+  BROWSER-LEVEL — 48 SKIPPED (see BLOCKED)
+    tests/e2e/smoke.spec.ts  25 — Phase 1 journeys
+    tests/e2e/tasks.spec.ts  23 — Phase 2 journeys, written and complete:
+        capture         quick capture appears in list and clears the field;
+                        full dialog with priority/category/estimate;
+                        `c` opens the dialog; typing "c" in a field does NOT
+        lifecycle       complete -> reopen; edit; subtasks added and
+                        completed with progress "1 / 3 completed";
+                        reschedule to tomorrow; archive leaves the active
+                        list but is found under the Archived filter
+        filtering       status filter survives a reload (URL state);
+                        search narrows and updates the URL; sort parameter
+        Today           a task due today appears and drives Next Best Action;
+                        `t` navigates to Today; completing updates progress
+        dashboard       Overview reflects real task data
+        palette         ⌘K finds a task by title; "New task" opens the dialog
+        a11y            labelled checkboxes; keyboard reachability
+        responsive      no horizontal overflow at 390 / 768 / 1440
+
+===============================================================================
+BLOCKED — WHAT IS MISSING AND HOW TO FIX IT
+===============================================================================
+
+BLOCKED ITEM : Browser-level E2E (48 tests). Unchanged from Phase 1.
+
+WHAT IS MISSING
+  Real Clerk API keys. The committed .env holds syntactically valid
+  placeholders that no Clerk instance stands behind.
+
+WHY
+  A Clerk development key makes the middleware perform a handshake: with no
+  __clerk_db_jwt cookie the browser is redirected to the instance's Frontend
+  API host. That host does not exist, so Clerk answers
+  {"errors":[{"message":"Invalid host","code":"host_invalid"}]} and the
+  browser never reaches the app. Server-side requests are unaffected, which
+  is why the 5 API tests pass against the real server and database.
+
+HOW TO FIX
+  1. Create an application at https://dashboard.clerk.com
+  2. Copy both API keys into .env
+  3. pnpm test:e2e     — all 53 run, no code change needed
+  tests/e2e/clerk-env.ts detects a real instance by decoding the publishable
+  key and un-skips automatically.
+
+WHAT WAS NOT DONE, AND WHY
+  Clerk was NOT mocked. A task test that stubs authentication proves only
+  that the stub works. The rules that actually matter here — cross-tenant
+  ownership on every read and write — are instead covered FOR REAL by 20
+  integration assertions against a live database with two real profiles.
+
+===============================================================================
+NOT VERIFIED IN THIS ENVIRONMENT
+===============================================================================
+
+  * Interactive behaviour of the Phase 2 React components in a browser.
+    The build compiles them, the pure presentational pieces are unit tested
+    (12 tests), and the data layer beneath them has 95 integration tests —
+    but optimistic-update rollback, dialog focus management and the
+    drag-free subtask flow have not been exercised by a real browser.
+    They are covered by the 23 written-but-skipped E2E tests above.
+  * Firefox / WebKit — configured, only Chromium installed.
+  * Lighthouse / Core Web Vitals — no deployment exists.
+  * Visual regression screenshots — the authenticated surfaces they would
+    cover are unreachable without Clerk keys.
+  * Manual screen-reader testing — automated assertions only.
+
+===============================================================================
+MANUAL SETUP STILL REQUIRED
+===============================================================================
+
+  1. REQUIRED for browser E2E and sign-in — Clerk keys in .env.
+  2. For integration tests (already done here, needed on a fresh clone):
+       createdb -O life_os life_os_test
+       pnpm db:test:setup
+  3. OPTIONAL — pnpm exec playwright install firefox webkit
+  4. NOTE — this directory is still not a git repository. .gitignore is
+     correct (.env, src/generated/, build output, test artifacts all
+     excluded); run `git init` when you want history.
+
+===============================================================================
+END OF PHASE 2 TEST REPORT
+===============================================================================

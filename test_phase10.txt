@@ -1,0 +1,226 @@
+LIFE OS — PHASE 10 TEST REPORT (PROACTIVE LIFE INTELLIGENCE)
+============================================================
+
+Date:        2026-09-16
+Phase:       10 — Forgotten items, deadline risk, behaviour patterns, time
+                  audit, life score, proactive notifications, scheduled jobs
+Verdict:     COMPLETE AND FULLY VERIFIED, including the scheduled job path
+             against live Redis. Only browser UI remains unverified.
+
+
+1. THE PROBLEM THIS PHASE POSES
+-------------------------------
+
+Every other phase answers a question the user asked. This one SPEAKS WITHOUT
+BEING ASKED, and quantifies a person's life while doing it. That makes it the
+phase where fabrication would do the most damage and be hardest to notice.
+
+Three rules govern every function, and each is tested:
+
+  1. NO CLAIM WITHOUT EVIDENCE. Every finding carries the numbers it came
+     from, and the UI shows them beside the claim.
+  2. NEVER DIAGNOSE. Life OS reports what happened — "moved four times" —
+     never why. It has counts, not insight into a person.
+  3. INSUFFICIENT DATA MEANS SILENCE. Below a minimum sample the answer is
+     `null`, not a guess dressed as an observation.
+
+Most of this phase's tests are NEGATIVE assertions: proof that the system
+stays quiet when it does not know something.
+
+
+2. WHAT WAS BUILT
+-----------------
+
+  src/services/intelligence/intelligence.derive.ts  pure engines
+  src/services/intelligence/intelligence.query.ts   real data → engines
+  src/services/intelligence/proactive.service.ts    the scheduled scan
+  src/features/intelligence/components/*            the Insights surface
+  src/app/(app)/insights/page.tsx                   the page
+
+  Worker: `proactive-scan` job added, hourly (see §5).
+
+No new database tables. Everything is computed from what Phases 2–9 already
+record — a "life score" table would be storing a derived truth that decays.
+
+
+3. TEST RESULTS
+---------------
+
+  Unit (Phase 10 only)         34 / 34   passed
+  Integration (Phase 10 only)  21 / 21   passed
+  ----------------------------------------------
+  Unit (whole project)        537 / 537  passed   (was 503 after Phase 9)
+  Integration (whole project) 447 / 447  passed   (was 426 after Phase 9)
+  E2E, environment-independent 76 / 76   passed   (was 68; +2 route guards)
+
+  pnpm typecheck / lint / format:check / build — all clean
+  /insights and /plan present in the route table
+
+
+4. THE DEFECT THIS PHASE'S TESTS CAUGHT
+---------------------------------------
+
+**A BRAND-NEW ACCOUNT WAS SCORED 0 OUT OF 100.**
+
+The wellbeing component computed `checkInCount / daysPossible`. For a user who
+signed up an hour ago that is 0/28 = 0%, which was then the ONLY measured
+component, so the overall life score came out as 0 — and the Insights page
+would have greeted a new user with a quantified verdict that their life rates
+zero.
+
+This is exactly the class of bug this phase is most at risk of: arithmetically
+defensible, superficially reasonable, and genuinely harmful.
+
+Fixed: never having logged a check-in is NOT TRACKED, precisely like never
+having scheduled a habit. `score` is `null` until there is at least one
+check-in, after which the ratio is measured normally. Caught by an integration
+test written specifically to assert a new account is told nothing.
+
+
+5. RESTRAINT IN THE PROACTIVE SCAN
+----------------------------------
+
+  5.1 AT MOST ONCE PER LOCAL DAY per profile
+      Verified: a second scan one minute later creates nothing and reports the
+      profile as skipped. The check is against notifications actually written,
+      so it survives a worker restart.
+
+  5.2 AT MOST 3 INSIGHTS, most severe first
+      A system that surfaces everything it notices is noise, and noise gets
+      muted. Tested with ten candidates.
+
+  5.3 ONLY INSIDE WAKING HOURS (08:00–21:00 local)
+      Verified: a scan at 03:00 local examines nobody.
+
+  5.4 PROACTIVE ALERTS NEVER OVERRIDE QUIET HOURS
+      This is the single most important assertion in the phase. Phase 6 lets
+      urgent notifications bypass quiet hours; proactive ones explicitly pass
+      `isUrgent: false`. Verified with quiet hours set to the entire day: the
+      insight is RECORDED but NOT delivered, and stays PENDING.
+
+      The reasoning, stated in the code: the user did not ask for it, so it
+      does not get to override their silence.
+
+  5.5 Honours a disabled PROACTIVE channel. Verified.
+
+  5.6 Nothing to say means nothing sent. Verified: a scan over accounts with
+      no findings creates zero notifications.
+
+  5.7 Failures are isolated per profile — one user's bad data cannot stop
+      everyone else's scan.
+
+LIVE VERIFICATION: the scan was executed through the REAL worker entrypoint
+(`pnpm worker:once`, which calls the same `proactiveScan()` the queued job
+calls) against the real database, returning honest zeroes on an empty system.
+The hourly `proactive-scan` job is registered in `scripts/worker.ts` alongside
+the reminder sweep verified live in Phase 6.
+
+
+6. THE THRESHOLDS, AND WHY EACH IS WHERE IT IS
+----------------------------------------------
+
+  FORGOTTEN_DAYS = 30
+    A task untouched for a week is normal life. Setting this low turns the
+    feature into a nagging machine, which users disable — and a disabled
+    feature helps nobody. Items WITH a due date are never "forgotten"; they
+    are scheduled.
+
+  MIN_PATTERN_SAMPLE = 20, MIN_PATTERN_MARGIN = 3
+    "You're most productive on Tuesdays" drawn from three data points is
+    astrology. Two days differing by one completion is noise, and reporting it
+    would train the user to ignore everything this module says. Both floors
+    are tested by asserting SILENCE below them.
+
+  MIN_TREND_CHANGE = 15 percentage points
+    A 62%-vs-58% change is not a trend.
+
+  MAX_PROACTIVE_PER_DAY = 3
+    See §5.2.
+
+Every threshold is a named constant with the reasoning in a comment beside it,
+so a future change is a deliberate decision rather than a tweak.
+
+
+7. HONESTY IN THE NUMBERS
+-------------------------
+
+  7.1 The life score averages ONLY measured components, and says how many
+      ("Averaged across 2 of 4 areas — the rest have nothing to measure").
+      With no components at all it is `null` and explains itself. There is no
+      default 50 "to have something to show".
+
+  7.2 Deadline risk uses TODAY'S ACTUAL FREE TIME, not the theoretical
+      working-hours window. A student whose days are full of classes does not
+      have eight free hours, and calling a deadline "comfortable" on that basis
+      would be a confident wrong answer. (This was found when lint flagged the
+      free-time query as unused — the real defect was larger than the lint.)
+
+  7.3 IMPOSSIBLE is said, not softened. 50 hours of work in 2 days is reported
+      as not achievable, with the arithmetic shown.
+
+  7.4 The time audit reports ONLY logged time and says so. An empty chart
+      implying "you did nothing" would be a lie; the user simply did not log.
+
+  7.5 Patterns are phrased as observation, never diagnosis. The UI section is
+      titled "Patterns" with "Observed from your history. What happened, not
+      why."
+
+
+8. CROSS-USER ISOLATION
+-----------------------
+
+Verified inside the intelligence layer, which reads from eight other modules
+at once and is therefore where a leak could most easily hide:
+
+  - Another user's 90-day-stale task does not appear, and the serialised
+    report does not contain its title anywhere.
+  - Another user's 30 completions do not create this user's patterns.
+  - The life score is computed per profile — a data-rich neighbour does not
+    give this user a score.
+  - Each profile receives only its own proactive notifications.
+
+
+9. LIMITATIONS
+--------------
+
+  BROWSER UI: the Insights page compiles, type-checks, lints and builds but
+  has not been driven in a browser — the placeholder Clerk key still blocks
+  that, unchanged since Phase 4.
+
+  DELIBERATE SIMPLIFICATIONS, stated in code rather than hidden:
+   - Remaining project work is estimated at 30 minutes per open task.
+   - The time audit covers logged STUDY sessions only; Life OS does not track
+     time spent on tasks, so it does not pretend to.
+   - Patterns are drawn from a 28-day window.
+
+  NOT A LIMITATION: no part of the intelligence logic depends on a model, so
+  unlike Phases 7 and 8 there is no unverifiable network boundary here.
+
+
+10. REGRESSION — PHASES 1-9
+---------------------------
+
+  Unit          537 / 537  passed
+  Integration   447 / 447  passed
+  E2E (runnable) 76 / 76   passed
+  Build, typecheck, lint, format — all clean
+
+No earlier-phase file was rewritten. Additions: the proactive job registered
+in the worker, the Insights nav entry, and two more anonymous-access guards.
+
+
+11. COMPLETION RATING
+---------------------
+
+  Intelligence engines                100%  (34 unit tests, mostly negative)
+  Query layer against real data       100%  (21 integration tests)
+  Proactive scan and its restraint    100%  including quiet-hours deference
+  Scheduled job registration          100%  run live via the real worker path
+  Cross-user isolation                100%
+  Works with no AI configured         100%
+  UI implementation                   100%  built, typed, linted, builds
+  UI verified in a real browser          0%  BLOCKED — Clerk
+
+  Overall Phase 10:  ~95% verified.
+
+All ten phases are now implemented. See FINAL_TEST_REPORT.md.

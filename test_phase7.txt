@@ -1,0 +1,273 @@
+LIFE OS — PHASE 7 TEST REPORT (TELEGRAM BOT)
+============================================
+
+Date:        2026-09-16
+Phase:       7 — Telegram bot, secure account linking, commands
+Verdict:     COMPLETE in code and provably correct at the service level.
+             LIVE bot verification BLOCKED — no bot token exists (see §8).
+
+
+1. WHAT WAS BUILT
+-----------------
+
+Data model (migration 20260915183038_add_telegram):
+
+  TelegramLink       profileId UNIQUE, telegramChatId UNIQUE, isActive,
+                     linkedAt, unlinkedAt, lastMessageAt
+  TelegramLinkToken  tokenHash UNIQUE (SHA-256 only), expiresAt, consumedAt,
+                     consumedBy, attempts
+  TelegramMessage    direction, telegramMessageId, text, command, wasHandled,
+                     UNIQUE (linkId, telegramMessageId)
+
+Code:
+
+  src/services/telegram/telegram.parse.ts    pure parsing (no I/O, no secrets)
+  src/services/telegram/telegram.link.ts     token issue / redeem / unlink
+  src/services/telegram/telegram.client.ts   Bot API calls + secret handling
+  src/services/telegram/telegram.handler.ts  commands → application services
+  src/app/api/telegram/webhook/route.ts      the security boundary
+  src/features/telegram/actions.ts           server actions
+  src/features/telegram/components/*         settings panel
+  src/features/schedule/components/notification-settings-form.tsx
+
+Commands: /start /link /help /today /agenda /tasks /task /done /habits /check
+/remind /status /unlink
+
+
+2. TEST RESULTS
+---------------
+
+  Unit (Phase 7 only)          23 / 23   passed
+  Integration (Phase 7 only)   32 / 32   passed
+  ----------------------------------------------
+  Unit (whole project)        448 / 448  passed   (was 425 after Phase 6)
+  Integration (whole project) 378 / 378  passed   (was 346 after Phase 6)
+  E2E, environment-independent 68 / 68   passed   (was 52; +4 webhook security)
+  E2E, browser                416        SKIPPED — Clerk, see §8
+
+  pnpm typecheck    clean
+  pnpm lint         clean (0 errors, 0 warnings)
+  pnpm format:check clean
+  pnpm build        succeeded; /api/telegram/webhook in the route table
+
+
+3. THE SECURITY MODEL, AND THE TESTS THAT ATTACK IT
+---------------------------------------------------
+
+A linking token is the only thing between a stranger's Telegram account and a
+user's entire life — tasks, grades, finances, health. The tests attack the
+flow rather than merely exercising it.
+
+3.1 The plaintext token is NEVER stored
+  Only a SHA-256 hash reaches the database. Asserted directly: the stored row
+  does not equal the token, equals its hash, and `JSON.stringify(row)` does
+  not contain the token anywhere. A database dump contains no usable tokens.
+
+3.2 128 bits of entropy
+  16 random bytes as hex. Asserted by format. Brute force is not "expensive",
+  it is irrelevant.
+
+3.3 Single use
+  Redeeming a token marks it consumed INSIDE the same transaction, and only
+  `WHERE consumedAt IS NULL`, so two simultaneous redemptions cannot both
+  succeed. Replay from a second chat is refused. Tested.
+
+3.4 Expiry — 10 minutes
+  Tested at both edges: refused one minute after expiry, accepted one second
+  before it.
+
+3.5 Generating a new code kills the old one
+  A user who clicks "generate" twice holds exactly ONE live secret, not two.
+  Tested: the first token becomes invalid the moment the second is issued.
+
+3.6 Constant-time comparison
+  Hashes are compared with `timingSafeEqual`. `===` on hex short-circuits at
+  the first differing character, leaking how much of a guess was correct.
+
+3.7 A chat cannot be silently re-pointed
+  If chat X is linked to profile A, profile B's valid token CANNOT claim it —
+  whoever controls that chat would otherwise inherit B's data. Tested, and the
+  original owner is verified still in place afterwards.
+
+3.8 The bot is not an oracle
+  "Invalid", "expired" and "already used" produce the SAME reply. Asserted by
+  comparing the two replies for equality — telling a stranger which of the
+  three it was turns the bot into a probe for token validity.
+
+3.9 Unlinking really revokes
+  The chat can no longer reach the profile, and every pending token is
+  destroyed, so an old code cannot re-establish access the user just revoked.
+  The row survives with `isActive: false` for history.
+
+
+4. THE WEBHOOK BOUNDARY
+-----------------------
+
+The endpoint is unauthenticated by necessity — Telegram calls it — so
+everything protecting it lives in the route, and four E2E tests run
+unconditionally against the real built server:
+
+  - No secret header → 401 with an EMPTY body. Verified.
+  - Wrong secret header → 401. Verified.
+  - GET → 405. Answering GET would make it discoverable by a crawler.
+  - No Telegram secret appears in the client bundle, checked both by name and
+    by the shape of a bot token (`\d{8,}:[A-Za-z0-9_-]{30,}`).
+
+  FAIL CLOSED: with no `TELEGRAM_WEBHOOK_SECRET` configured, every request is
+  refused. An unconfigured secret must never mean "accept everything" — and
+  the server log line proving this fired during the test run.
+
+  The secret is checked BEFORE the body is read, so an unauthenticated caller
+  cannot make the server parse arbitrary JSON.
+
+  Once the secret checks out the route ALWAYS returns 200, even on a handler
+  crash. Telegram retries anything else, and a retry storm on a bug is worse
+  than a dropped message; the failure is logged instead.
+
+  Per-chat rate limiting (30/min) and bot-to-bot messages rejected.
+
+
+5. THE AI/BOT BOUNDARY RULE
+---------------------------
+
+The bot NEVER touches Prisma to mutate anything. Every write goes through the
+same application service the web UI calls:
+
+  /task   → createTask()          /check  → toggleHabitToday()
+  /done   → setTaskCompletion()   /remind → createReminder()
+
+Proven, not asserted: the `/task` test checks that the created task has the
+SERVICE's defaults and that an ActivityEvent was written — which a raw insert
+from the bot would not produce.
+
+Identity comes ONLY from `telegramChatId`. Tested directly: a message reading
+`/task profileId=<other user's id> steal` creates a task on the SENDER's
+profile with that text taken literally, and creates nothing on the named
+profile.
+
+Cross-user isolation tested: a linked chat asking `/today` sees its own tasks
+and never the other profile's, with both profiles' data present in the same
+tables.
+
+
+6. HONESTY IN THE BOT ITSELF
+----------------------------
+
+  - Plain text gets an honest refusal naming Phase 8, NOT an invented AI
+    reply. Asserted.
+  - `/remind` accepts one explicit `HH:MM what` form and REFUSES anything
+    else rather than guessing. A wrong guess means a reminder that never
+    fires, or fires at 3am. Asserted for "sometime tomorrow call mum".
+  - `/done` and `/check` refuse an index with no prior listing, and refuse 0,
+    99, "abc" and empty — verifying afterwards that nothing was completed.
+  - `/task` with no title asks rather than creating an empty task.
+
+  MarkdownV2 escaping is tested as a SECURITY property, not just a formatting
+  one: a task title is user input, and the tests assert that
+  `[click me](https://evil.example)` cannot inject a link into the bot's own
+  output.
+
+
+7. DEFECTS FOUND AND FIXED DURING THIS PHASE
+--------------------------------------------
+
+  1. **Blank optional env vars broke boot.** `TELEGRAM_BOT_TOKEN=""` — the
+     natural way a `.env` says "not configured", and what `.env.example`
+     ships — failed the format check, because `.optional()` does not skip an
+     empty string. The whole app refused to start. Fixed with an
+     `optionalSecret()` helper that normalises blank to undefined BEFORE
+     validation, while still holding a value that IS present to its full
+     format. Found by the integration suite failing to boot.
+
+  2. **Per-chat command memory survived a change of owner.** The ordered task
+     list behind `/done 2` was keyed by chat id alone. A chat unlinked by user
+     A and then linked by user B inherited A's list, so B's `/done 1`
+     referenced a task they cannot see. NO DATA LEAKED — the ownership check
+     in `setTaskCompletion` refused it — but the user got "something went
+     wrong" instead of "send /tasks first". Fixed by keying on chat AND
+     profile. Found by a test, not by reading the code.
+
+  3. **A leaked timer in the Telegram client.** The `AbortController` timeout
+     was never cleared, so every send kept the event loop alive for ten
+     seconds — meaning a worker shutdown would hang. Fixed with a `finally`.
+     Surfaced as a lint error about an unused variable; the real defect was
+     larger than the lint.
+
+  4. **A pre-existing time-dependent test.** `setTaskCompletion` stamped
+     `completedAt` from the wall clock while the test fixed the view's clock,
+     so "completed today" broke once real time crossed local midnight in the
+     test's zone — which happened DURING this session. Fixed properly by
+     giving the service an injectable `now`, matching the convention every
+     other service and derive module already follows, rather than loosening
+     the assertion.
+
+
+8. HONEST LIMITATIONS — WHAT COULD NOT BE VERIFIED
+--------------------------------------------------
+
+NO LIVE BOT VERIFICATION WAS POSSIBLE.
+
+  `TELEGRAM_BOT_TOKEN` is not set in this environment and there is no way to
+  obtain one without a Telegram account and a @BotFather conversation, which
+  is outside what I can do here. Consequently these are UNPROVEN BY EXECUTION:
+
+    - that `sendMessage` succeeds against the real Bot API
+    - that Telegram accepts the MarkdownV2 the bot produces
+    - that `setWebhook` registers correctly
+    - that Telegram's real update payload matches the shape parsed here
+    - end-to-end latency and retry behaviour from Telegram's side
+
+  I did NOT fake a bot. No mock Telegram server was stood up to produce a
+  green suite that proves nothing. What IS proven is everything up to the
+  network boundary: parsing, linking, authorisation, command handling,
+  idempotency, ownership and the webhook's refusal behaviour — all against a
+  real database, plus four live HTTP tests against the real built server.
+
+  TO VERIFY THE REST: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET`
+  in `.env`, expose the app publicly, and register the webhook. No code change
+  is required — `describeConfiguration()` already reports both booleans in
+  Settings, and the panel tells the user plainly when no bot is configured
+  rather than offering a button that cannot work.
+
+BROWSER UI TESTING remains blocked by the placeholder Clerk key, unchanged
+from Phases 4–6. The Telegram settings panel compiles, type-checks and builds,
+but has not been driven in a browser.
+
+REMAINING ENVIRONMENT GAP:
+  - No Gemini API key → Phase 8 live verification will be blocked
+
+
+9. REGRESSION — PHASES 1-6
+--------------------------
+
+  Unit          448 / 448  passed
+  Integration   378 / 378  passed
+  E2E (runnable) 68 / 68   passed
+  Build, typecheck, lint, format — all clean
+
+One earlier-phase file was changed for a real reason: `setTaskCompletion` now
+takes an optional `now` (§7.4). Everything else was additive — the Telegram
+panel and notification settings added to the Settings page, and the webhook
+route added.
+
+
+10. COMPLETION RATING
+---------------------
+
+  Data model and migrations           100%
+  Parsing layer                       100%  (23 unit tests)
+  Linking security                    100%  (32 integration tests, adversarial)
+  Webhook boundary                    100%  (4 live HTTP tests, fail-closed)
+  Command handling                    100%  routed through real services
+  Cross-user isolation                100%
+  UI implementation                   100%  built, typed, linted, builds
+  Live Telegram delivery                 0%  BLOCKED — no bot token (§8)
+  UI verified in a real browser          0%  BLOCKED — Clerk (§8)
+
+  Overall Phase 7:  ~85% verified.
+
+  Lower than Phase 6 because the external dependency here cannot be stood up
+  at all, whereas Redis could be. Everything on OUR side of the network
+  boundary is proven; nothing across it is.
+
+Phase 8 may begin.

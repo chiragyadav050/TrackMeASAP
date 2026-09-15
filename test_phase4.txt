@@ -1,0 +1,277 @@
+LIFE OS — PHASE 4 TEST REPORT (WORK + PROJECTS)
+================================================
+
+Date:        2026-09-15
+Phase:       4 — Work + Projects
+Verdict:     COMPLETE at the service, data and integration level.
+             Browser-level verification BLOCKED by the environment (see §8).
+
+
+1. WHAT WAS BUILT
+-----------------
+
+Data model (migration 20260915163555_add_work_projects, applied to dev + test):
+
+  Workspace          profileId, name, description, type, icon, archivedAt
+  Project            profileId, workspaceId, name, description, status,
+                     priority, startAt, targetEndAt, completedAt, archivedAt
+  ProjectMilestone   profileId, projectId, title, description, dueAt, status,
+                     sortOrder, completedAt
+  ProjectBlocker     profileId, projectId, reason, resolvedAt, resolutionNote
+
+  Task.projectId became a real foreign key with onDelete: SetNull.
+  `profileId` is denormalised onto every nested record so ownership guards read
+  the column directly rather than walking a relation.
+
+Code:
+
+  src/services/work/project.derive.ts    pure intelligence — no Prisma, no React
+  src/services/work/work.schema.ts       Zod schemas (isomorphic)
+  src/services/work/work.service.ts      mutations + ownership guards
+  src/services/work/work.query.ts        reads, aggregation, search
+  src/features/work/actions.ts           server actions + typed commands
+  src/features/work/components/*         7 UI components
+  src/features/today/work-panel.tsx      Today integration
+  src/types/work.ts                      DTOs that cross the server boundary
+
+Surfaces: /work, /projects, /projects/[projectId], plus tiles on /today and
+/overview and a Work group in the ⌘K palette.
+
+
+2. TEST RESULTS
+---------------
+
+  Unit (Phase 4 only)          27 / 27   passed
+  Integration (Phase 4 only)   43 / 43   passed
+  ----------------------------------------------
+  Unit (whole project)        338 / 338  passed   (was 311 before Phase 4)
+  Integration (whole project) 242 / 242  passed   (was 199 before Phase 4)
+  E2E, environment-independent 32 / 32   passed
+  E2E, browser                296        SKIPPED — see §8
+
+  pnpm typecheck    clean
+  pnpm lint         clean (0 errors, 0 warnings)
+  pnpm format:check clean
+  pnpm build        succeeded; /projects/[projectId] present in the route table
+  prisma migrate    "Database schema is up to date!"
+
+No test was weakened, skipped or rewritten to make it pass. Where a test
+disagreed with the code, the code was checked first — see §7.
+
+
+3. WHAT THE TESTS ACTUALLY PROVE
+--------------------------------
+
+3.1 Progress is honest
+  - Measured from TASKS, not milestones: milestone granularity varies wildly
+    between projects, so a milestone percentage is not comparable across them.
+  - A project with no tasks returns null, and every surface renders
+    "No tasks yet" — never a 0% bar. "Not started" and "0% done" are
+    different facts and the UI says so.
+  - CANCELLED tasks leave BOTH sides of the ratio. Verified: 1 done + 1
+    cancelled reads 100% of 1, not 50% of 2.
+  - Archived tasks are excluded entirely.
+
+3.2 Health precedence is fixed and tested in order
+    COMPLETED → BLOCKED → OVERDUE → AT_RISK → NOT_STARTED → ON_TRACK
+  - BLOCKED outranks OVERDUE on purpose: the blocker is the actionable thing.
+  - AT_RISK uses the RATIO of work done against time remaining (inside 7 days
+    with under half done), not a raw count — "three tasks left" is meaningless
+    without knowing whether that is three of four or three of forty.
+  - Health is judged in the PROFILE's zone. Test: a target of 23:00 Kolkata on
+    the 15th reads OVERDUE at 19:00Z on the 15th, because that is already the
+    16th locally.
+
+3.3 Blockers and status stay coupled
+  - Raising a blocker sets the project to BLOCKED.
+  - Resolving the LAST blocker returns it to ACTIVE.
+  - Resolving one of two leaves it BLOCKED.
+  - Resolving the last blocker does NOT override a deliberate PAUSED. Tested.
+
+3.4 Tasks are never destroyed by project operations
+  - Deleting a project keeps its tasks and nulls the link (SetNull).
+  - Deleting a workspace cascades projects/milestones/blockers but keeps tasks.
+  - Unlinking a task detaches it without deleting either record.
+  All three verified by loading the task back from the database afterwards.
+
+3.5 A project task is an ORDINARY task
+  Same `tasks` table, with category PROJECT and a projectId. It appears in
+  Tasks, Today, search and the project page from one source of truth — not a
+  parallel project-task model that could drift.
+
+3.6 Milestone ordering
+  - Next milestone = soonest incomplete; dated beats undated whatever the
+    manual sortOrder, because a deadline is a fact and sortOrder is only an
+    intention.
+  - A BLOCKED milestone is still "next" — it is not done.
+  - Reordering rejects an incomplete set outright rather than applying half of
+    it, so a malformed request cannot reorder a partial list or pull in
+    another project's milestone.
+
+
+4. SECURITY / OWNERSHIP
+-----------------------
+
+tests/integration/work-authorization.test.ts — 22 tests. An "intruder" profile
+is a REAL second row in the database and attacks with VALID ids.
+
+  - All four ownership guards return NOT_FOUND, never FORBIDDEN. "Forbidden"
+    would confirm the id exists and turn a guessed id into an existence
+    oracle. Asserted on the error CODE, not merely "it threw".
+  - Reads: listProjects, getProject, getProjectDetail, listWorkspacesWithCounts
+    and searchWork all return empty/null for another user's data.
+  - Writes: every workspace, project, milestone and blocker mutation refused,
+    and the record re-read afterwards to confirm it was untouched.
+  - Grafting attacks, all refused:
+      * creating a project inside another user's workspace
+      * moving your OWN project into another user's workspace
+      * adding a milestone / blocker / task to another user's project
+      * attaching your own task to another user's project (this is why
+        linkTaskToProject checks BOTH sides — a valid task id of your own plus
+        someone else's project id is exactly the attack)
+      * pulling another user's task into your own project
+  - Denormalised `profileId` verified present and correct on nested records;
+    the guards read that column, so a wrong value would make them check nothing.
+
+Other constraints held:
+  - No action accepts a profileId. Identity comes from the Clerk session via
+    createAuthenticatedAction / createAuthenticatedCommand.
+  - No secrets added, none logged. Activity metadata carries ids and truncated
+    names only.
+  - Filters from the URL are parsed with the SAME Zod schema the actions use,
+    so a hand-edited query string falls back to defaults rather than reaching
+    the query layer unvalidated.
+  - Unauthenticated GETs of /work, /projects and /projects/<id> verified to
+    return non-200 and to contain no project data (tests/e2e/api.spec.ts).
+  - Destructive actions (delete project, delete milestone, delete blocker)
+    confirm first and name the reversible alternative.
+
+
+5. CORRECTNESS OF TIME
+----------------------
+
+  - Dates are posted as plain YYYY-MM-DD and converted server-side with the
+    profile's zone. The browser's zone is never consulted.
+  - Date prefills for <input type="date"> are computed on the SERVER
+    (startDateInput / targetEndDateInput). The first draft used
+    toISOString().slice(0,10) in the client, which shifts the date by a day for
+    anyone east or west of UTC — the same defect fixed in Phase 2. Caught and
+    corrected before it shipped.
+  - Overdue comparison distinguishes all-day tasks (compared to local start of
+    day) from timed ones (compared to the instant).
+
+
+6. PERFORMANCE
+--------------
+
+The project list needs task counts, overdue counts, milestones and blocker
+counts per project — the classic N+1. Instead, hydrateProjects issues FOUR
+GROUPED queries for the whole page regardless of how many projects it holds,
+so cost is constant in project count. listWorkspacesWithCounts does the same
+with one grouped query. getProject loads a single row directly rather than
+scanning a page.
+
+
+7. DEFECTS FOUND AND FIXED DURING THIS PHASE
+--------------------------------------------
+
+  1. Client-side date prefill used toISOString(), which would show the wrong
+     day for non-UTC users. Fixed by computing the value on the server (§5).
+
+  2. getProject originally reused listProjects and scanned up to 100 rows to
+     find one, and could not see archived projects without a second query.
+     Rewritten as a direct scoped findFirst.
+
+  3. React Compiler rule violation: the search debounce cached a closure in a
+     ref and wrote to it during render. Rewritten so the effect depends only
+     on values. Not suppressed.
+
+  4. A conditional expression used as a statement (lint warning) in the
+     project detail action runner. Rewritten as an if.
+
+  5. One of MY OWN test expectations was wrong: I asserted a project reads
+     ON_TRACK after its blocker clears, but the project had no tasks, so
+     NOT_STARTED is correct. The TEST was fixed, not the code.
+
+  6. My first "project cannot end before it starts" test called the service,
+     which takes already-validated input by design. Rewritten to assert
+     against the schema, which is what every action actually runs.
+
+
+8. HONEST LIMITATIONS — WHAT COULD NOT BE VERIFIED
+--------------------------------------------------
+
+BROWSER-LEVEL TESTING IS BLOCKED. This is an environment limitation, not a
+statement that the UI works.
+
+  Cause 1 — Clerk. NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is a placeholder
+  (pk_test_ encoding "placeholder-not-a-real-instance.clerk.accounts.dev").
+  Clerk's development handshake redirects any browser without the
+  __clerk_db_jwt cookie to that Frontend API host, which does not exist. It
+  answers {"errors":[{"message":"Invalid host","code":"host_invalid"}]}.
+  Confirmed firsthand this session with a Playwright probe; final URL was
+  .../v1/client/handshake?...__clerk_hs_reason=dev-browser-missing.
+
+  Cause 2 — No browser automation. The Chrome extension reports no connected
+  browsers (list_connected_browsers returns []), so manual driving of the UI
+  was not possible either.
+
+  Response: I did NOT mock Clerk. Mocking it would only prove the mock works
+  and would report a green suite that verifies nothing. The 20 Phase 4 browser
+  specs in tests/e2e/work.spec.ts are written and ready; they skip with an
+  explicit printed reason and will run unchanged the moment real Clerk keys
+  are present. The environment-independent E2E tests — including three new
+  anonymous-access guards for the Phase 4 routes — run and pass today.
+
+  Consequently these remain UNVERIFIED BY EXECUTION:
+    - visual rendering, dark mode, and the 320/768/1440 breakpoints
+    - dialog submit flows end-to-end in a real browser
+    - keyboard navigation and focus order on the new surfaces
+    - toast copy as a user sees it
+
+  What IS verified for the UI: it compiles, type-checks, lints clean under the
+  React Compiler rules, and the production build renders every route. The
+  logic those screens display is covered by the 70 Phase 4 tests above.
+
+OTHER ENVIRONMENT GAPS (not Phase 4 blockers, recorded for later phases):
+  - No Gemini API key            → Phase 8 live verification will be blocked
+  - No Telegram bot token        → Phase 7 live verification will be blocked
+  - Redis installed but stopped  → startable; Phase 6 will need it running
+
+
+9. REGRESSION — PHASES 1-3
+--------------------------
+
+Re-run in full after Phase 4 landed:
+
+  Unit          338 / 338  passed   (Phase 1-3 portion: 311, all still green)
+  Integration   242 / 242  passed   (Phase 1-3 portion: 199, all still green)
+  Build         clean
+  Typecheck     clean
+  Lint          clean
+
+No Phase 1-3 file was rewritten. The only edits outside src/services/work and
+src/features/work were additive: a Projects tile on the Overview grid, a Work
+panel on Today, a Work group in the command palette, and the two page files
+that previously held Phase 4 placeholders.
+
+
+10. COMPLETION RATING
+---------------------
+
+  Data model and migrations           100%
+  Derive / intelligence layer         100%  (27 unit tests)
+  Service layer and ownership         100%  (43 integration tests)
+  Query layer and aggregation         100%
+  Server actions                      100%
+  UI implementation                   100%  built, typed, linted, builds
+  UI verified in a real browser          0%  BLOCKED — §8
+  Cross-surface integration           100%  Today, Overview, search, palette
+
+  Overall Phase 4:  ~90% verified.
+
+  The missing 10% is not unfinished work; it is work that cannot be confirmed
+  in this environment. Provide real Clerk keys and `pnpm test:e2e` will
+  exercise all 20 browser specs without a code change.
+
+Phase 5 may begin.

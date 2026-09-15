@@ -1,0 +1,1972 @@
+// Life OS — Prisma schema
+//
+// PHASE 1 (Foundation) intentionally models ONLY the authenticated user's
+// Profile. Every future user-owned entity (tasks, subjects, assignments,
+// exams, habits, reminders, calendar events, goals, expenses, AI memories …)
+// must reference `Profile.id` via a required `profileId` column with
+// `onDelete: Cascade`, and must carry a `@@index([profileId, ...])` so that
+// per-user queries stay selective. See docs/ARCHITECTURE.md.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// How the UI resolves light/dark. Mirrors next-themes' three states so the
+/// server-persisted preference and the client store never disagree.
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+/// First day of the week for calendar/planning surfaces. Deliberately not
+/// derived from locale so the user keeps explicit control.
+enum WeekStart {
+  SUNDAY
+  MONDAY
+  SATURDAY
+}
+
+/// The application-side identity record for a Clerk user.
+///
+/// `clerkUserId` is the stable external identifier and the ONLY thing used to
+/// resolve identity. Email is stored for display/support purposes only and is
+/// never treated as a key — users can change it in Clerk at any time.
+model Profile {
+  id          String @id @default(cuid())
+  clerkUserId String @unique @map("clerk_user_id")
+
+  /// Display-only mirror of the Clerk primary email. Nullable because Clerk
+  /// supports identifier types (phone, OAuth-only) that carry no email.
+  email       String? @map("email")
+  displayName String  @map("display_name")
+  avatarUrl   String? @map("avatar_url")
+
+  /// IANA time zone identifier, e.g. "Asia/Kolkata". Validated against the
+  /// runtime's Intl database rather than a hard-coded list.
+  timeZone String @default("UTC") @map("time_zone")
+  locale   String @default("en") @map("locale")
+
+  weekStart       WeekStart       @default(MONDAY) @map("week_start")
+  themePreference ThemePreference @default(SYSTEM) @map("theme_preference")
+
+  /// Daily windows stored as minutes elapsed since local midnight (0–1439).
+  /// Integer-minutes keeps the value time-zone agnostic and trivially
+  /// comparable, unlike a DateTime whose date component would be meaningless.
+  workingHoursStart Int @default(540) @map("working_hours_start") // 09:00
+  workingHoursEnd   Int @default(1020) @map("working_hours_end") // 17:00
+  studyHoursStart   Int @default(1140) @map("study_hours_start") // 19:00
+  studyHoursEnd     Int @default(1320) @map("study_hours_end") // 22:00
+
+  onboardingCompletedAt DateTime? @map("onboarding_completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tasks    Task[]
+  subtasks Subtask[]
+  activity ActivityEvent[]
+
+  semesters         Semester[]
+  subjects          Subject[]
+  classSchedules    ClassSchedule[]
+  classSessions     ClassSession[]
+  attendance        AttendanceRecord[]
+  assignments       Assignment[]
+  assessments       Assessment[]
+  exams             Exam[]
+  examTopics        ExamTopic[]
+  studySessions     StudySession[]
+  academicNotes     AcademicNote[]
+  attachments       Attachment[]
+  workspaces        Workspace[]
+  projects          Project[]
+  projectMilestones ProjectMilestone[]
+  projectBlockers   ProjectBlocker[]
+
+  goals           Goal[]
+  goalMilestones  GoalMilestone[]
+  habits          Habit[]
+  habitLogs       HabitLog[]
+  dailyCheckIns   DailyCheckIn[]
+  moneyCategories MoneyCategory[]
+  moneyEntries    MoneyEntry[]
+  subscriptions   Subscription[]
+  importantDates  ImportantDate[]
+
+  reminders               Reminder[]
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
+  notificationSettings    NotificationSettings?
+  calendarEvents          CalendarEvent[]
+
+  telegramLink       TelegramLink?
+  telegramLinkTokens TelegramLinkToken[]
+
+  aiConversations AIConversation[]
+  aiMessages      AIMessage[]
+  aiActions       AIAction[]
+  aiMemories      AIMemory[]
+  aiUsageLogs     AIUsageLog[]
+
+  @@index([onboardingCompletedAt])
+  @@map("profiles")
+}
+
+// ===========================================================================
+// PHASE 2 — TASKS
+// ===========================================================================
+
+/// Lifecycle of a task.
+///
+/// Note what is NOT here: "OVERDUE". Overdue is a function of `dueAt` and the
+/// current time in the user's zone, so storing it would mean a row whose
+/// truth decays the moment it is written and a job to keep it fresh. It is
+/// always derived — see `isOverdue()` in the task query layer.
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+/// How much mental energy a task demands. Used by the prioritisation engine
+/// today, and by AI planning in Phase 9 to fit work to the time of day.
+enum EnergyLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Coarse bucket for filtering.
+///
+/// An enum rather than a free-text field or a user-defined table: Phase 2
+/// needs a fixed, fast filter, and a typo-prone string column would make the
+/// filter unreliable. Finer-grained association arrives with the modules that
+/// own it — see `subjectId` / `projectId` on Task.
+enum TaskCategory {
+  PERSONAL
+  COLLEGE
+  WORK
+  PROJECT
+  OTHER
+}
+
+model Task {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  notes       String?
+
+  status   TaskStatus   @default(TODO)
+  priority TaskPriority @default(MEDIUM)
+  category TaskCategory @default(PERSONAL)
+  energy   EnergyLevel  @default(MEDIUM)
+
+  /// Absolute instant. Always stored in UTC and converted to the profile's
+  /// zone for display and for day grouping — never the server's zone.
+  dueAt DateTime? @map("due_at")
+
+  /// True when the user picked a day but no clock time. Without this flag a
+  /// date-only task is indistinguishable from one due at local midnight, and
+  /// it would be reported overdue for the whole day it is actually due.
+  isAllDay Boolean @default(false) @map("is_all_day")
+
+  estimatedMinutes Int? @map("estimated_minutes")
+  actualMinutes    Int? @map("actual_minutes")
+
+  completedAt DateTime? @map("completed_at")
+  /// Archived rows stay queryable but leave every active view and every
+  /// statistic. Nothing in Phase 2 hard-deletes on the user's behalf.
+  archivedAt  DateTime? @map("archived_at")
+
+  /// Manual ordering within a list. Sparse (1000-step) so a drag between two
+  /// neighbours can be written without renumbering the whole list.
+  position Int @default(0)
+
+  /// Academic context (Phase 3). `onDelete: SetNull` rather than Cascade:
+  /// deleting a subject must not silently destroy the work the user did for
+  /// it — the task survives, merely unlinked.
+  subjectId String?  @map("subject_id")
+  subject   Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  /// Project context (Phase 4). `SetNull` for the same reason as `subjectId`:
+  /// deleting a project must not destroy the work done for it.
+  projectId String?  @map("project_id")
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  /// Goal context (Phase 5). Same `SetNull` reasoning: abandoning a goal must
+  /// not delete the work already done toward it.
+  goalId String? @map("goal_id")
+  goal   Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  reminders Reminder[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subtasks Subtask[]
+
+  /// Set when this task was generated from an academic assignment. The
+  /// relation is declared on `Assignment`; see the note there on why the two
+  /// stay separate records.
+  assignment Assignment?
+
+  /// Indexes follow the queries that actually run (see task.query.ts):
+  ///   • the active list, Today and Overdue all scope by profile, exclude
+  ///     archived rows and order by due date
+  @@index([profileId, archivedAt, status, dueAt])
+  ///   • the default "smart" sort and the priority filter
+  @@index([profileId, archivedAt, priority, dueAt])
+  ///   • "recently created" / "recently updated" sorts
+  @@index([profileId, archivedAt, createdAt])
+  ///   • completed-today statistics
+  @@index([profileId, completedAt])
+  ///   • Phase 3/4 will query by these; indexed now so the columns are usable
+  ///     the moment those modules land
+  @@index([profileId, subjectId])
+  @@index([profileId, projectId])
+  @@index([profileId, goalId])
+  @@map("tasks")
+}
+
+/// A checklist item beneath a Task.
+///
+/// A separate model rather than a self-referencing Task: subtasks need only a
+/// title, a done flag and an order, and keeping them out of `Task` means no
+/// list query ever has to remember `where: { parentId: null }` — a filter
+/// that is silently wrong the one time it is forgotten.
+///
+/// `profileId` is denormalised onto this row on purpose. It lets every
+/// subtask mutation prove ownership with a single indexed lookup instead of
+/// joining through the parent, which is exactly the kind of join an
+/// authorization check should not depend on.
+model Subtask {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  taskId String @map("task_id")
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  title       String
+  isCompleted Boolean   @default(false) @map("is_completed")
+  completedAt DateTime? @map("completed_at")
+
+  /// Sparse ordering, as on Task.
+  position Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([taskId, position])
+  @@index([profileId])
+  @@map("subtasks")
+}
+
+// ===========================================================================
+// AUDIT FOUNDATION
+// ===========================================================================
+
+enum ActivityAction {
+  CREATED
+  UPDATED
+  COMPLETED
+  REOPENED
+  ARCHIVED
+  UNARCHIVED
+  DELETED
+  RESCHEDULED
+}
+
+/// A lightweight, append-only record of meaningful mutations.
+///
+/// Phase 2 writes it and nothing reads it in the UI. It exists now because
+/// history cannot be reconstructed retroactively: Phase 8's assistant will
+/// need to answer "what happened this week", and Phase 10 needs drift
+/// detection. Both require events recorded from the start.
+///
+/// `entityType` is a string rather than an enum so future modules can log
+/// against their own entities without a migration to this table.
+model ActivityEvent {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  entityType String         @map("entity_type")
+  entityId   String         @map("entity_id")
+  action     ActivityAction
+
+  /// Small, non-sensitive summary of the change — changed field names and
+  /// coarse values. Never a full entity snapshot and never user notes.
+  metadata Json? @map("metadata")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([profileId, createdAt])
+  @@index([entityType, entityId])
+  @@map("activity_events")
+}
+
+// ===========================================================================
+// PHASE 3 — ACADEMICS
+// ---------------------------------------------------------------------------
+// DATE-ONLY vs ABSOLUTE INSTANT — the distinction that matters most here.
+//
+//   @db.Date        A calendar date with no time and no zone. Used where the
+//                   concept genuinely has no clock time: semester start/end,
+//                   the day an assignment was handed out, a recurring
+//                   schedule's validity window. Postgres stores a `date`, so
+//                   there is no midnight-rollover ambiguity to get wrong.
+//
+//   DateTime (UTC)  A real instant. Used where a clock time exists: a class
+//                   at 10:00, an exam at 09:30, a deadline, a study session.
+//                   Always rendered through the profile's zone.
+//
+// Mixing the two is the single easiest way to ship a system that is a day out
+// for anyone east of Greenwich, so every field below states which it is.
+// ===========================================================================
+
+enum SemesterStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+/// One academic term.
+///
+/// `isCurrent` is enforced as AT MOST ONE PER PROFILE by a partial unique
+/// index added in the migration SQL (`WHERE is_current`). Prisma cannot
+/// express a partial index, and a plain `@@unique([profileId, isCurrent])`
+/// would wrongly forbid a second NON-current semester. The service also
+/// clears the previous flag inside a transaction — the index is the backstop
+/// that makes the rule true even if a future code path forgets.
+model Semester {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  name         String
+  /// Free text rather than an Int: "2025-26" is how Indian universities
+  /// actually write an academic year, and it spans two calendar years.
+  academicYear String @map("academic_year")
+
+  /// DATE-ONLY.
+  startDate DateTime @map("start_date") @db.Date
+  /// DATE-ONLY.
+  endDate   DateTime @map("end_date") @db.Date
+
+  status    SemesterStatus @default(UPCOMING)
+  isCurrent Boolean        @default(false) @map("is_current")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subjects    Subject[]
+  assignments Assignment[]
+  assessments Assessment[]
+  exams       Exam[]
+
+  @@index([profileId, status])
+  @@index([profileId, startDate])
+  @@map("semesters")
+}
+
+/// A course within a semester.
+model Subject {
+  id         String   @id @default(cuid())
+  profileId  String   @map("profile_id")
+  profile    Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  semesterId String   @map("semester_id")
+  semester   Semester @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  name        String
+  /// University course code, e.g. "CC-301". Optional: not every institution
+  /// uses them consistently.
+  code        String?
+  facultyName String? @map("faculty_name")
+  credits     Int?
+
+  /// Minimum attendance percentage for THIS subject, 0–100. Per-subject
+  /// rather than global because labs and theory papers routinely differ, and
+  /// no single university rule can be hard-coded.
+  attendanceThreshold Int @default(75) @map("attendance_threshold")
+
+  /// A design-system token name ("indigo", "amber"), never a raw hex.
+  /// Colour is a secondary cue only — the UI always shows the code or name
+  /// alongside it, so nothing depends on hue alone.
+  colorKey String? @map("color_key")
+
+  notes      String?
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  schedules     ClassSchedule[]
+  classSessions ClassSession[]
+  attendance    AttendanceRecord[]
+  assignments   Assignment[]
+  assessments   Assessment[]
+  exams         Exam[]
+  studySessions StudySession[]
+  academicNotes AcademicNote[]
+  tasks         Task[]
+
+  @@index([profileId, semesterId, archivedAt])
+  @@index([profileId, archivedAt])
+  @@map("subjects")
+}
+
+enum ClassSessionType {
+  LECTURE
+  LAB
+  TUTORIAL
+  OTHER
+}
+
+/// THE RECURRING TIMETABLE ENTRY — "Cloud Computing, every Monday 10–11".
+///
+/// Deliberately NOT the thing attendance attaches to. A schedule is a rule;
+/// attendance is a fact about a specific day. Keeping them apart is what lets
+/// a single Monday be cancelled or moved without corrupting the timetable, and
+/// what stops a mid-semester timetable change from rewriting history.
+model ClassSchedule {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// ISO weekday: 1 = Monday … 7 = Sunday.
+  dayOfWeek Int @map("day_of_week")
+
+  /// Minutes since local midnight (0–1439), as elsewhere in Life OS. A wall
+  /// clock time has no date, so storing a DateTime would be meaningless.
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  sessionType ClassSessionType @default(LECTURE) @map("session_type")
+  room        String?
+  teacherName String?          @map("teacher_name")
+
+  /// DATE-ONLY validity window. Lets a timetable change mid-semester without
+  /// deleting the old rule and the history that depends on it.
+  effectiveFrom DateTime? @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sessions ClassSession[]
+
+  @@index([profileId, subjectId, isActive])
+  @@index([profileId, dayOfWeek])
+  @@map("class_schedules")
+}
+
+enum ClassSessionStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+/// AN ACTUAL CLASS ON AN ACTUAL DAY — "Cloud Computing on 21 September".
+///
+/// Generated from a `ClassSchedule` (keeping `scheduleId`) or created ad hoc
+/// for a one-off session. Attendance hangs off this, never off the schedule.
+model ClassSession {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// Null for an ad-hoc class (an extra lecture, a rescheduled slot).
+  /// `SetNull` so deleting a timetable rule does not delete the history of
+  /// classes that already happened under it.
+  scheduleId String?        @map("schedule_id")
+  schedule   ClassSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  /// ABSOLUTE INSTANTS.
+  startAt DateTime @map("start_at")
+  endAt   DateTime @map("end_at")
+
+  title       String?
+  sessionType ClassSessionType   @default(LECTURE) @map("session_type")
+  room        String?
+  teacherName String?            @map("teacher_name")
+  notes       String?
+  status      ClassSessionStatus @default(SCHEDULED)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  attendance AttendanceRecord?
+
+  /// A schedule generates at most one session per day, so re-running
+  /// generation is idempotent rather than producing duplicates.
+  @@unique([scheduleId, startAt])
+  @@index([profileId, startAt])
+  @@index([profileId, subjectId, startAt])
+  @@index([profileId, status, startAt])
+  @@map("class_sessions")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+/// Attendance for one class occurrence.
+///
+/// A separate row rather than a column on `ClassSession` because "not marked
+/// yet" and "marked absent" are different facts, and collapsing them would
+/// silently count every unmarked future class against the student.
+///
+/// `subjectId` is denormalised so per-subject aggregation is a single indexed
+/// scan rather than a join through sessions.
+model AttendanceRecord {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  classSessionId String       @unique @map("class_session_id")
+  classSession   ClassSession @relation(fields: [classSessionId], references: [id], onDelete: Cascade)
+
+  status   AttendanceStatus
+  markedAt DateTime         @default(now()) @map("marked_at")
+  note     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, subjectId, status])
+  @@map("attendance_records")
+}
+
+/// WORK state of an assignment — how far along the student is.
+///
+/// Note what is NOT here: SUBMITTED and GRADED. Those are administrative
+/// facts, not progress, and conflating them is the mistake this model exists
+/// to avoid: finishing the work and handing it in are separate events that
+/// routinely happen days apart (or in the wrong order). Submission lives on
+/// `submissionStatus`; "graded" is simply `marksObtained != null`.
+enum AssignmentStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+/// ADMINISTRATIVE state — what the institution has received.
+enum SubmissionStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  LATE
+  ACCEPTED
+}
+
+model Assignment {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// Denormalised from the subject so semester-wide lists and dashboards do
+  /// not join through `subjects` on every query.
+  semesterId String   @map("semester_id")
+  semester   Semester @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  notes       String?
+
+  /// DATE-ONLY — the day it was handed out.
+  assignedAt DateTime? @map("assigned_at") @db.Date
+
+  /// ABSOLUTE INSTANT. `isAllDay` carries the same meaning as on Task: a
+  /// deadline of "Friday" is due at the END of Friday, not 00:00.
+  dueAt    DateTime? @map("due_at")
+  isAllDay Boolean   @default(false) @map("is_all_day")
+
+  priority TaskPriority     @default(MEDIUM)
+  status   AssignmentStatus @default(NOT_STARTED)
+
+  estimatedMinutes Int? @map("estimated_minutes")
+  actualMinutes    Int? @map("actual_minutes")
+
+  submissionStatus SubmissionStatus @default(NOT_SUBMITTED) @map("submission_status")
+  submissionUrl    String?          @map("submission_url")
+  submittedAt      DateTime?        @map("submitted_at")
+
+  /// Marks are nullable until returned. `marksObtained != null` is what
+  /// "graded" means; there is no separate flag to fall out of step with it.
+  marksObtained Float? @map("marks_obtained")
+  maxMarks      Float? @map("max_marks")
+
+  completedAt DateTime? @map("completed_at")
+  archivedAt  DateTime? @map("archived_at")
+
+  /// The task generated from this assignment, if the user asked for one.
+  ///
+  /// A REFERENCE, not a copy. The assignment stays the academic record and
+  /// the task is the schedulable unit of work; completing the task does NOT
+  /// mark the assignment submitted. `SetNull` so deleting the task leaves the
+  /// assignment intact.
+  taskId String? @unique @map("task_id")
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, archivedAt, status, dueAt])
+  @@index([profileId, semesterId, archivedAt])
+  @@index([profileId, subjectId, archivedAt])
+  @@map("assignments")
+}
+
+/// Continuous / internal assessment: quizzes, class tests, practicals, vivas.
+///
+/// Kept separate from `Exam` rather than merged behind a type flag. The two
+/// behave differently in the ways that matter: an Exam carries a topic
+/// checklist and drives preparation tracking, an Assessment is a small event
+/// with a mark. Merging them would mean a model where half the columns are
+/// meaningless for half the rows.
+enum AssessmentType {
+  QUIZ
+  CLASS_TEST
+  INTERNAL
+  PRACTICAL_TEST
+  VIVA
+  OTHER
+}
+
+enum AssessmentStatus {
+  UPCOMING
+  COMPLETED
+  CANCELLED
+}
+
+model Assessment {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  semesterId String   @map("semester_id")
+  semester   Semester @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  title String
+  type  AssessmentType @default(QUIZ)
+
+  /// ABSOLUTE INSTANT.
+  scheduledAt     DateTime? @map("scheduled_at")
+  durationMinutes Int?      @map("duration_minutes")
+
+  maxMarks      Float? @map("max_marks")
+  marksObtained Float? @map("marks_obtained")
+
+  syllabusNotes String?          @map("syllabus_notes")
+  status        AssessmentStatus @default(UPCOMING)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, semesterId, status])
+  @@index([profileId, subjectId, scheduledAt])
+  @@map("assessments")
+}
+
+enum ExamType {
+  MIDTERM
+  END_SEMESTER
+  PRACTICAL
+  VIVA
+  SUPPLEMENTARY
+  BACKLOG
+  OTHER
+}
+
+enum ExamStatus {
+  UPCOMING
+  COMPLETED
+  CANCELLED
+}
+
+model Exam {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  semesterId String   @map("semester_id")
+  semester   Semester @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  /// Nullable: a supplementary or backlog paper can belong to the semester
+  /// without mapping onto a subject the student is currently enrolled in.
+  subjectId String?  @map("subject_id")
+  subject   Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  title String
+  type  ExamType @default(MIDTERM)
+
+  /// ABSOLUTE INSTANT.
+  startAt         DateTime? @map("start_at")
+  durationMinutes Int?      @map("duration_minutes")
+
+  location String?
+
+  maxMarks      Float? @map("max_marks")
+  marksObtained Float? @map("marks_obtained")
+
+  status ExamStatus @default(UPCOMING)
+  notes  String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  topics        ExamTopic[]
+  studySessions StudySession[]
+
+  @@index([profileId, semesterId, status])
+  @@index([profileId, status, startAt])
+  @@index([profileId, subjectId])
+  @@map("exams")
+}
+
+enum TopicImportance {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// One syllabus item for an exam. The unit preparation percentage is built
+/// from — see `calculatePreparation()` for exactly how.
+model ExamTopic {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  examId    String  @map("exam_id")
+  exam      Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+
+  importance  TopicImportance @default(MEDIUM)
+  isCompleted Boolean         @default(false) @map("is_completed")
+
+  /// Self-rated 1–5, nullable until the student has an opinion. Feeds the
+  /// priority engine, never the preparation percentage — see the note there.
+  confidence Int? @map("confidence")
+
+  position Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  studySessions StudySession[]
+
+  @@index([examId, position])
+  @@index([profileId, isCompleted])
+  @@map("exam_topics")
+}
+
+/// A logged period of study.
+///
+/// Recorded after the fact rather than run as a live timer: Phase 3 has no
+/// background job to close an abandoned session, and a stopwatch that can be
+/// left running overnight produces worse data than an honest estimate.
+model StudySession {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// Optional narrowing: which exam, and which topic within it.
+  examId  String?    @map("exam_id")
+  exam    Exam?      @relation(fields: [examId], references: [id], onDelete: SetNull)
+  topicId String?    @map("topic_id")
+  topic   ExamTopic? @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  /// ABSOLUTE INSTANTS.
+  startedAt DateTime  @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+
+  /// Stored rather than derived from the timestamps: the user may log "45
+  /// minutes yesterday evening" without knowing exactly when it ended, and a
+  /// denormalised integer keeps weekly aggregation to a single SUM.
+  durationMinutes Int @map("duration_minutes")
+
+  /// Self-rated 1–5, all optional.
+  focusRating      Int? @map("focus_rating")
+  confidenceBefore Int? @map("confidence_before")
+  confidenceAfter  Int? @map("confidence_after")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, startedAt])
+  @@index([profileId, subjectId, startedAt])
+  @@index([profileId, examId])
+  @@map("study_sessions")
+}
+
+/// A lightweight note attached to a subject. Deliberately plain text with a
+/// title — not a document editor.
+model AcademicNote {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subjectId String  @map("subject_id")
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  title String
+  body  String
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, subjectId, updatedAt])
+  @@map("academic_notes")
+}
+
+/// METADATA ONLY — no bytes are stored here or anywhere else yet.
+///
+/// Phase 3 ships the record and the `StorageProvider` interface
+/// (`src/services/storage/provider.ts`) and nothing else: no upload endpoint,
+/// no bucket, no UI. The table exists so the phase that adds a provider does
+/// not also have to migrate every entity that wants attachments.
+///
+/// `entityType` is a string rather than an enum so a future module can attach
+/// files without a migration to this table.
+model Attachment {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id")
+
+  fileName  String @map("file_name")
+  mimeType  String @map("mime_type")
+  sizeBytes Int    @map("size_bytes")
+
+  /// Opaque key within the provider's namespace. Large files never go into
+  /// PostgreSQL; this points at wherever they do live.
+  storageProvider String @map("storage_provider")
+  storageKey      String @map("storage_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([profileId, entityType, entityId])
+  @@map("attachments")
+}
+
+// ===========================================================================
+// PHASE 4 — WORK + PROJECTS
+// ---------------------------------------------------------------------------
+// Projects do NOT own their own task model. A project task is an ordinary
+// `Task` with `projectId` set, so it appears in Tasks, Today, search and the
+// project page from ONE source of truth. A parallel task table would mean two
+// places to complete something and two answers to "what is due today".
+// ===========================================================================
+
+enum WorkspaceType {
+  PERSONAL
+  FREELANCE
+  BUSINESS
+  SAAS
+  CONTENT
+  RESEARCH
+  OTHER
+}
+
+/// A container for related projects — a client, a business, a side venture.
+model Workspace {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  type        WorkspaceType @default(PERSONAL)
+  /// A lucide icon name, not an image. Keeps the design system in charge.
+  icon        String?
+
+  archivedAt DateTime? @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  projects Project[]
+
+  @@index([profileId, archivedAt])
+  @@map("workspaces")
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  BLOCKED
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  profileId   String    @map("profile_id")
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  workspaceId String    @map("workspace_id")
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  status   ProjectStatus @default(PLANNED)
+  /// Reuses the task priority enum rather than declaring a parallel one, so
+  /// "HIGH" means the same thing everywhere in Life OS.
+  priority TaskPriority  @default(MEDIUM)
+
+  /// ABSOLUTE INSTANTS, rendered in the profile's zone.
+  startAt     DateTime? @map("start_at")
+  targetEndAt DateTime? @map("target_end_at")
+  completedAt DateTime? @map("completed_at")
+  archivedAt  DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  milestones ProjectMilestone[]
+  blockers   ProjectBlocker[]
+  tasks      Task[]
+
+  @@index([profileId, archivedAt, status])
+  @@index([profileId, workspaceId, archivedAt])
+  @@index([profileId, targetEndAt])
+  @@map("projects")
+}
+
+enum MilestoneStatus {
+  PENDING
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+model ProjectMilestone {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  dueAt       DateTime? @map("due_at")
+
+  status    MilestoneStatus @default(PENDING)
+  /// Sparse (1000-step) ordering, as for subtasks and exam topics.
+  sortOrder Int             @default(0) @map("sort_order")
+
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([projectId, sortOrder])
+  @@index([profileId, status, dueAt])
+  @@map("project_milestones")
+}
+
+/// Why a project is stuck, and for how long.
+///
+/// A row rather than a boolean on Project: "blocked since Tuesday because the
+/// client has not sent assets" is actionable, and `resolvedAt` gives the
+/// history needed to notice a project that keeps getting stuck.
+model ProjectBlocker {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  projectId String  @map("project_id")
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  reason         String
+  resolvedAt     DateTime? @map("resolved_at")
+  resolutionNote String?   @map("resolution_note")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([projectId, resolvedAt])
+  @@index([profileId, resolvedAt])
+  @@map("project_blockers")
+}
+
+// ===========================================================================
+// PHASE 5 — GOALS, HABITS, LIFE
+// ===========================================================================
+
+enum GoalCategory {
+  ACADEMIC
+  CAREER
+  HEALTH
+  FINANCE
+  SKILL
+  PERSONAL
+  RELATIONSHIP
+  OTHER
+}
+
+enum GoalTimeframe {
+  WEEK
+  MONTH
+  QUARTER
+  SEMESTER
+  YEAR
+  LONG_TERM
+}
+
+enum GoalStatus {
+  ACTIVE
+  ACHIEVED
+  PAUSED
+  ABANDONED
+}
+
+/// An outcome the user is working toward.
+///
+/// Progress is NOT a free-typed percentage. A goal is either measured
+/// (`targetValue` + `currentValue`, e.g. "read 12 books") or milestone-based,
+/// and the derive layer picks whichever the user actually supplied. A
+/// hand-entered "70% done" is a feeling, not a measurement, and would poison
+/// every roll-up that reads it.
+model Goal {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  category    GoalCategory  @default(PERSONAL)
+  timeframe   GoalTimeframe @default(MONTH)
+  status      GoalStatus    @default(ACTIVE)
+
+  /// DATE-ONLY. When the user intends to have achieved this.
+  targetDate DateTime? @map("target_date") @db.Date
+
+  /// Measured goals only. `targetValue` null means "milestone-based".
+  targetValue  Float?  @map("target_value")
+  currentValue Float   @default(0) @map("current_value")
+  /// What the numbers count: "books", "kg", "₹". Display only.
+  unit         String?
+
+  achievedAt DateTime? @map("achieved_at")
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  milestones GoalMilestone[]
+  habits     Habit[]
+  tasks      Task[]
+
+  @@index([profileId, status, archivedAt])
+  @@index([profileId, targetDate])
+  @@map("goals")
+}
+
+/// A checkpoint on the way to a goal.
+model GoalMilestone {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  goalId    String  @map("goal_id")
+  goal      Goal    @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  title String
+  /// DATE-ONLY.
+  dueDate     DateTime? @map("due_date") @db.Date
+  completedAt DateTime? @map("completed_at")
+  sortOrder   Int       @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([goalId, sortOrder])
+  @@index([profileId, completedAt])
+  @@map("goal_milestones")
+}
+
+enum HabitKind {
+  /// Something to do more of: "meditate", "run".
+  BUILD
+  /// Something to do less of, tracked by abstaining: "no smoking".
+  QUIT
+}
+
+enum HabitCadence {
+  DAILY
+  /// N times per calendar week, where N is `targetPerPeriod`.
+  WEEKLY
+  /// Specific weekdays, stored in `weekdays`.
+  SPECIFIC_DAYS
+}
+
+/// A repeated behaviour.
+///
+/// Streaks are DERIVED from HabitLog rows, never stored on this model. A
+/// stored streak is a number that silently becomes wrong the moment a log is
+/// back-dated, edited or deleted — and users do all three.
+model Habit {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Optional link to the outcome this habit serves.
+  goalId String? @map("goal_id")
+  goal   Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  name        String
+  description String?
+  kind        HabitKind    @default(BUILD)
+  cadence     HabitCadence @default(DAILY)
+
+  /// WEEKLY cadence only: how many times per week counts as success.
+  targetPerPeriod Int @default(1) @map("target_per_period")
+
+  /// SPECIFIC_DAYS only. ISO weekday numbers, 1 = Monday … 7 = Sunday.
+  weekdays Int[] @default([])
+
+  /// Optional quantity per completion ("8 glasses"), display and totals only.
+  targetAmount Float?  @map("target_amount")
+  unit         String?
+
+  /// Minutes since local midnight for the nudge. Null = no reminder.
+  reminderMinute Int? @map("reminder_minute")
+
+  colorKey String? @map("color_key")
+
+  /// DATE-ONLY. Days before this are not counted as misses.
+  startDate DateTime  @map("start_date") @db.Date
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  logs      HabitLog[]
+  reminders Reminder[]
+
+  @@index([profileId, archivedAt])
+  @@map("habits")
+}
+
+/// One day's record for one habit.
+///
+/// `logDate` is DATE-ONLY and unique per habit: a habit is done or not done on
+/// a given LOCAL day, and storing an instant would make "today" depend on the
+/// server's zone.
+model HabitLog {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  habitId   String  @map("habit_id")
+  habit     Habit   @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  /// DATE-ONLY, in the profile's zone at the moment of logging.
+  logDate DateTime @map("log_date") @db.Date
+
+  /// False records a DELIBERATE miss, which is different from no row at all
+  /// (not yet answered). The distinction drives honest completion rates.
+  isCompleted Boolean @default(true) @map("is_completed")
+
+  /// For habits with a quantity: how much was actually done.
+  amount Float?
+  note   String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([habitId, logDate])
+  @@index([profileId, logDate])
+  @@map("habit_logs")
+}
+
+enum MoodLevel {
+  VERY_LOW
+  LOW
+  NEUTRAL
+  GOOD
+  GREAT
+}
+
+/// One row per local day: how the day actually went.
+///
+/// Every field is optional. A check-in with only a mood is a real check-in —
+/// forcing a complete form is how daily tracking dies in week two.
+model DailyCheckIn {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// DATE-ONLY.
+  checkInDate DateTime @map("check_in_date") @db.Date
+
+  mood   MoodLevel?
+  /// 1–5, self-reported.
+  energy Int?
+  stress Int?
+
+  sleepMinutes    Int?   @map("sleep_minutes")
+  /// DATE-ONLY day the sleep is attributed to is `checkInDate`; the clock
+  /// times are minutes since local midnight, so 23:30 is 1410.
+  sleptAtMinute   Int?   @map("slept_at_minute")
+  wokeAtMinute    Int?   @map("woke_at_minute")
+
+  waterGlasses    Int?   @map("water_glasses")
+  exerciseMinutes Int?   @map("exercise_minutes")
+  steps           Int?
+
+  /// Free text, the user's own words. Never analysed, never rewritten.
+  gratitude String?
+  notes     String?
+  highlight String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, checkInDate])
+  @@index([profileId, checkInDate])
+  @@map("daily_check_ins")
+}
+
+enum MoneyDirection {
+  EXPENSE
+  INCOME
+}
+
+/// A user-defined bucket for money. Applies to both directions so "Freelance"
+/// can be an income category and "Food" an expense one without two models.
+model MoneyCategory {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  name      String
+  direction MoneyDirection @default(EXPENSE)
+  colorKey  String?        @map("color_key")
+
+  /// Minor units (paise/cents) per calendar month. Null = untracked.
+  monthlyBudgetMinor Int? @map("monthly_budget_minor")
+
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  entries MoneyEntry[]
+
+  @@unique([profileId, direction, name])
+  @@index([profileId, direction, archivedAt])
+  @@map("money_categories")
+}
+
+/// Money in or out.
+///
+/// AMOUNTS ARE INTEGER MINOR UNITS (paise), never Float. Binary floating point
+/// cannot represent 0.1 exactly, so summing a month of float rupees drifts —
+/// and a personal finance tool whose totals drift is worse than none.
+model MoneyEntry {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  categoryId String?        @map("category_id")
+  category   MoneyCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  direction   MoneyDirection
+  amountMinor Int            @map("amount_minor")
+  /// ISO 4217, e.g. "INR". Stored per entry so a trip abroad is not silently
+  /// added to home-currency totals.
+  currency    String         @default("INR")
+
+  description String
+  /// DATE-ONLY: the day the money moved, in the user's zone.
+  entryDate   DateTime @map("entry_date") @db.Date
+
+  /// Set when this entry was generated from a Subscription, so regenerating
+  /// cannot double-count.
+  subscriptionId String?       @map("subscription_id")
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, entryDate])
+  @@index([profileId, direction, entryDate])
+  @@index([categoryId, entryDate])
+  @@map("money_entries")
+}
+
+enum BillingCycle {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+/// A recurring charge.
+///
+/// The next charge date is STORED rather than derived, because the user can
+/// skip or shift a renewal and that decision must survive. It is advanced
+/// explicitly when a charge is recorded, never silently on read.
+model Subscription {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  name        String
+  amountMinor Int          @map("amount_minor")
+  currency    String       @default("INR")
+  cycle       BillingCycle @default(MONTHLY)
+
+  /// DATE-ONLY.
+  nextChargeDate DateTime  @map("next_charge_date") @db.Date
+  startedOn      DateTime? @map("started_on") @db.Date
+  cancelledAt    DateTime? @map("cancelled_at")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  entries MoneyEntry[]
+
+  @@index([profileId, cancelledAt, nextChargeDate])
+  @@map("subscriptions")
+}
+
+enum ImportantDateKind {
+  BIRTHDAY
+  ANNIVERSARY
+  DEADLINE
+  RENEWAL
+  OTHER
+}
+
+/// A date that matters, optionally yearly.
+///
+/// For a recurring birthday the YEAR in `eventDate` is the original year (the
+/// year of birth) and is preserved, so "turning 21" is computable. The next
+/// occurrence is derived, never overwritten.
+model ImportantDate {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title String
+  kind  ImportantDateKind @default(OTHER)
+
+  /// DATE-ONLY. Original date, year included.
+  eventDate     DateTime @map("event_date") @db.Date
+  isRecurring   Boolean  @default(true) @map("is_recurring")
+  /// Days ahead to start surfacing it.
+  remindDaysBefore Int   @default(7) @map("remind_days_before")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, eventDate])
+  @@map("important_dates")
+}
+
+// ===========================================================================
+// PHASE 6 — REMINDERS, NOTIFICATIONS, CALENDAR
+// ===========================================================================
+
+enum ReminderRecurrence {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+  /// Specific weekdays, stored in `weekdays`.
+  WEEKDAYS
+}
+
+enum ReminderStatus {
+  SCHEDULED
+  SENT
+  SNOOZED
+  DISMISSED
+  COMPLETED
+  CANCELLED
+}
+
+/// Something the user wants to be told about at a specific instant.
+///
+/// `remindAt` is an ABSOLUTE instant, not a date-only value: "remind me at
+/// 7pm" means 7pm where the user is, and the worker that fires it has no
+/// profile context. The conversion happens once, on write, using the
+/// profile's zone.
+model Reminder {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title   String
+  message String?
+
+  /// ABSOLUTE instant. The next time this reminder should fire.
+  remindAt DateTime @map("remind_at")
+
+  recurrence ReminderRecurrence @default(NONE)
+  /// WEEKDAYS only. ISO weekday numbers, 1 = Monday … 7 = Sunday.
+  weekdays   Int[]              @default([])
+  /// Recurrence stops after this instant. Null means indefinitely.
+  recurUntil DateTime?          @map("recur_until")
+
+  status ReminderStatus @default(SCHEDULED)
+
+  /// Set while snoozed so the original time is not lost.
+  snoozedUntil DateTime? @map("snoozed_until")
+  lastFiredAt  DateTime? @map("last_fired_at")
+
+  /// Optional links. All SetNull: deleting the thing a reminder points at
+  /// must not delete the reminder, which may still be meaningful.
+  taskId String? @map("task_id")
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  eventId String?        @map("event_id")
+  event   CalendarEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  habitId String? @map("habit_id")
+  habit   Habit?  @relation(fields: [habitId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  notifications Notification[]
+
+  /// The worker's sweep query: due, still scheduled, ordered by time.
+  @@index([status, remindAt])
+  @@index([profileId, status, remindAt])
+  @@map("reminders")
+}
+
+enum NotificationChannel {
+  IN_APP
+  TELEGRAM
+  EMAIL
+  PUSH
+}
+
+enum NotificationKind {
+  REMINDER
+  DEADLINE
+  ATTENDANCE
+  HABIT
+  PROJECT
+  FINANCE
+  SYSTEM
+  PROACTIVE
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+  DISMISSED
+}
+
+/// A message delivered to the user.
+///
+/// `dedupeKey` is the idempotency guarantee: a worker that retries, or two
+/// workers that race, produce ONE row rather than two identical alerts. It is
+/// unique per profile, so the same key for different users is fine.
+model Notification {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  kind    NotificationKind    @default(SYSTEM)
+  channel NotificationChannel @default(IN_APP)
+  status  NotificationStatus  @default(PENDING)
+
+  title String
+  body  String?
+  /// In-app destination, e.g. "/tasks". Never an external URL.
+  href  String?
+
+  /// Stable identity for this logical alert. See the note above.
+  dedupeKey String @map("dedupe_key")
+
+  scheduledFor DateTime  @map("scheduled_for")
+  sentAt       DateTime? @map("sent_at")
+  readAt       DateTime? @map("read_at")
+
+  /// Retry bookkeeping, so a permanently failing send stops rather than
+  /// looping forever.
+  attempts  Int     @default(0)
+  lastError String? @map("last_error")
+
+  reminderId String?   @map("reminder_id")
+  reminder   Reminder? @relation(fields: [reminderId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, dedupeKey])
+  @@index([profileId, status, scheduledFor])
+  @@index([profileId, readAt])
+  @@map("notifications")
+}
+
+/// Per-profile, per-kind delivery preferences.
+///
+/// A row's ABSENCE means "use the default" rather than "disabled", so a new
+/// notification kind added in a later phase does not arrive silently off for
+/// every existing user.
+model NotificationPreference {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  kind    NotificationKind
+  channel NotificationChannel @default(IN_APP)
+  isEnabled Boolean           @default(true) @map("is_enabled")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, kind, channel])
+  @@map("notification_preferences")
+}
+
+/// Quiet hours and global delivery settings.
+model NotificationSettings {
+  id        String  @id @default(cuid())
+  profileId String  @unique @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Minutes since local midnight. A window that wraps midnight (22:00–07:00)
+  /// is expressed as start > end and handled by the derive layer.
+  quietHoursStart Int?    @map("quiet_hours_start")
+  quietHoursEnd   Int?    @map("quiet_hours_end")
+  isQuietHoursEnabled Boolean @default(false) @map("is_quiet_hours_enabled")
+
+  /// Hard ceiling on non-urgent notifications per local day.
+  dailyLimit Int @default(20) @map("daily_limit")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_settings")
+}
+
+enum CalendarEventKind {
+  PERSONAL
+  CLASS
+  EXAM
+  DEADLINE
+  WORK
+  SOCIAL
+  TRAVEL
+  OTHER
+}
+
+/// A block of time on the calendar.
+///
+/// Stored as absolute instants with an `isAllDay` flag. An all-day event
+/// anchors at local midnight and its END is EXCLUSIVE, which is what makes
+/// "Monday to Wednesday" three days rather than two-and-a-bit.
+model CalendarEvent {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  location    String?
+  kind        CalendarEventKind @default(PERSONAL)
+
+  startAt  DateTime @map("start_at")
+  endAt    DateTime @map("end_at")
+  isAllDay Boolean  @default(false) @map("is_all_day")
+
+  /// A design-system token name, never a raw hex.
+  colorKey String? @map("color_key")
+
+  /// Set when this block was generated from another record, so the calendar
+  /// can show coursework without duplicating it.
+  sourceKind String? @map("source_kind")
+  sourceId   String? @map("source_id")
+
+  /// Blocks marked busy participate in conflict detection; a "tentative" or
+  /// informational block does not.
+  isBusy Boolean @default(true) @map("is_busy")
+
+  cancelledAt DateTime? @map("cancelled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  reminders Reminder[]
+
+  /// The range query every calendar view runs.
+  @@index([profileId, startAt])
+  @@index([profileId, endAt])
+  @@map("calendar_events")
+}
+
+// ===========================================================================
+// PHASE 7 — TELEGRAM
+// ===========================================================================
+
+/// A Telegram chat linked to a profile.
+///
+/// The link is one-to-one and INBOUND-AUTHORITATIVE: `telegramChatId` is the
+/// only thing a webhook can present, so it is the lookup key and is unique
+/// across the whole table. Without that uniqueness, two profiles could claim
+/// the same chat and a message would be attributed to whichever row happened
+/// to be read first.
+model TelegramLink {
+  id        String  @id @default(cuid())
+  profileId String  @unique @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// Telegram's numeric chat id. Stored as a string: it is an identifier, not
+  /// a quantity, and Telegram ids already exceed 2^32.
+  telegramChatId String @unique @map("telegram_chat_id")
+
+  /// Display-only mirrors of the Telegram profile, for showing the user WHICH
+  /// account is linked. Never used for authorisation.
+  telegramUsername  String? @map("telegram_username")
+  telegramFirstName String? @map("telegram_first_name")
+
+  isActive   Boolean   @default(true) @map("is_active")
+  linkedAt   DateTime  @default(now()) @map("linked_at")
+  unlinkedAt DateTime? @map("unlinked_at")
+
+  lastMessageAt DateTime? @map("last_message_at")
+
+  /// The ordered ids from the last `/tasks` and `/habits` replies, so that
+  /// `/done 2` and `/check 1` mean something on the NEXT message.
+  ///
+  /// Persisted rather than held in process memory: on a serverless host the
+  /// following webhook routinely lands on a different instance, so an
+  /// in-memory map would make those commands fail unpredictably — the user
+  /// would be told to "send /tasks first" immediately after doing exactly
+  /// that. Ownership is still enforced by the service the id is passed to.
+  lastTaskIds  String[] @map("last_task_ids")
+  lastHabitIds String[] @map("last_habit_ids")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  messages TelegramMessage[]
+
+  @@index([profileId, isActive])
+  @@map("telegram_links")
+}
+
+/// A short-lived, single-use token that links a Telegram chat to a profile.
+///
+/// SECURITY MODEL. The token is the ONLY thing standing between a stranger's
+/// Telegram account and a user's entire life data, so:
+///
+///   • Only a HASH is stored. A leaked database dump must not contain usable
+///     linking tokens.
+///   • It expires (see `expiresAt`) — an abandoned token in a chat history
+///     stops being dangerous.
+///   • It is single-use (`consumedAt`), so replaying an intercepted message
+///     cannot link a second account.
+///   • Attempts are counted, so a brute-force sweep against short tokens is
+///     visible and can be stopped.
+model TelegramLinkToken {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the token. The plaintext is shown to the user ONCE and never
+  /// persisted anywhere.
+  tokenHash String @unique @map("token_hash")
+
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  /// The chat that redeemed it, kept for audit.
+  consumedBy String?   @map("consumed_by")
+
+  attempts Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([profileId, consumedAt])
+  @@index([expiresAt])
+  @@map("telegram_link_tokens")
+}
+
+enum TelegramDirection {
+  INBOUND
+  OUTBOUND
+}
+
+/// A message exchanged with the bot.
+///
+/// Stored so the user can see what the bot did on their behalf, and so a
+/// duplicate webhook delivery can be recognised. Telegram retries deliveries
+/// it believes failed, so `telegramMessageId` is unique per link.
+model TelegramMessage {
+  id     String       @id @default(cuid())
+  linkId String       @map("link_id")
+  link   TelegramLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  direction TelegramDirection
+
+  /// Telegram's own message id. Null for outbound messages we failed to send.
+  telegramMessageId String? @map("telegram_message_id")
+
+  /// The message body. Truncated on write — a bot log must not become an
+  /// unbounded store of arbitrary user text.
+  text String
+
+  /// The command that was recognised, e.g. "/tasks". Null for plain text.
+  command String?
+
+  /// Whether the bot could act on it, and what went wrong if not.
+  wasHandled Boolean @default(false) @map("was_handled")
+  error      String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([linkId, telegramMessageId])
+  @@index([linkId, createdAt])
+  @@map("telegram_messages")
+}
+
+// ===========================================================================
+// PHASE 8 — AI AGENT
+// ===========================================================================
+
+enum AIConversationSource {
+  WEB
+  TELEGRAM
+  SYSTEM
+}
+
+/// One thread of conversation with the assistant.
+model AIConversation {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title  String?
+  source AIConversationSource @default(WEB)
+
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  messages AIMessage[]
+  actions  AIAction[]
+
+  @@index([profileId, archivedAt, updatedAt])
+  @@map("ai_conversations")
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  TOOL
+  SYSTEM
+}
+
+/// A single turn.
+///
+/// `profileId` is denormalised so ownership can be checked without joining
+/// through the conversation — the same rule every other nested model follows.
+model AIMessage {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  conversationId String         @map("conversation_id")
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role    AIMessageRole
+  content String
+
+  /// Tool calls the model requested on this turn, as JSON. Stored so the
+  /// conversation can be replayed exactly and so an audit can show what the
+  /// model tried to do, not merely what it said.
+  toolCalls Json? @map("tool_calls")
+
+  /// Token accounting for this turn. Null for turns that cost nothing.
+  inputTokens  Int? @map("input_tokens")
+  outputTokens Int? @map("output_tokens")
+
+  /// The model that produced it, for attribution when models change.
+  model String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@index([profileId, createdAt])
+  @@map("ai_messages")
+}
+
+enum AIActionStatus {
+  /// Proposed by the model, waiting for the user to confirm.
+  PENDING
+  CONFIRMED
+  REJECTED
+  EXECUTED
+  FAILED
+  /// The user never answered and the proposal aged out.
+  EXPIRED
+}
+
+enum AIActionRisk {
+  /// Reads and additive writes. Executed immediately.
+  SAFE
+  /// Changes existing data. Executed immediately but always logged.
+  MODERATE
+  /// Deletes, cancels, or anything outward-facing. REQUIRES CONFIRMATION.
+  DESTRUCTIVE
+}
+
+/// Something the AI wants to do, or did.
+///
+/// Every tool invocation lands here — not only the confirmed ones — so the
+/// user can always answer "what has this thing been doing?". A DESTRUCTIVE
+/// action is written as PENDING and is NOT executed until the user confirms.
+model AIAction {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  conversationId String?         @map("conversation_id")
+  conversation   AIConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  /// The registered tool name, e.g. "task.create".
+  toolName String @map("tool_name")
+  /// Arguments as the model supplied them, AFTER schema validation.
+  arguments Json
+
+  risk   AIActionRisk   @default(SAFE)
+  status AIActionStatus @default(EXECUTED)
+
+  /// One line a human can read, e.g. "Delete 3 tasks". Generated by the tool,
+  /// never by the model, so a confirmation prompt cannot be worded by the
+  /// thing asking for permission.
+  summary String
+
+  result String?
+  error  String?
+
+  /// A PENDING action stops being actionable after this instant.
+  expiresAt   DateTime? @map("expires_at")
+  confirmedAt DateTime? @map("confirmed_at")
+  executedAt  DateTime? @map("executed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, status, createdAt])
+  @@index([profileId, createdAt])
+  @@map("ai_actions")
+}
+
+enum AIMemoryKind {
+  PREFERENCE
+  FACT
+  PATTERN
+  GOAL_CONTEXT
+}
+
+/// Something worth remembering between conversations.
+///
+/// Deliberately small and explicit rather than an embedding store: a student
+/// should be able to READ everything the assistant believes about them, and
+/// delete any of it. Opaque vectors cannot be audited by the person they
+/// describe.
+model AIMemory {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  kind    AIMemoryKind @default(FACT)
+  /// Short, human-readable. Shown verbatim in Settings.
+  content String
+
+  /// Where it came from, so a wrong memory can be traced.
+  sourceConversationId String? @map("source_conversation_id")
+
+  /// Cheap relevance signal: how often it has actually been used.
+  useCount   Int       @default(0) @map("use_count")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([profileId, kind])
+  @@map("ai_memories")
+}
+
+/// Per-day token and cost accounting.
+///
+/// One row per profile per local day, incremented atomically. Exists so a
+/// runaway loop is capped before it becomes a bill, and so the user can see
+/// what the assistant costs.
+model AIUsageLog {
+  id        String  @id @default(cuid())
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  /// DATE-ONLY, in the profile's zone.
+  usageDate DateTime @map("usage_date") @db.Date
+
+  requests     Int @default(0)
+  inputTokens  Int @default(0) @map("input_tokens")
+  outputTokens Int @default(0) @map("output_tokens")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([profileId, usageDate])
+  @@map("ai_usage_logs")
+}

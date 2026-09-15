@@ -1,0 +1,440 @@
+===============================================================================
+LIFE OS — PHASE 1 TEST CHECKLIST AND RESULTS
+===============================================================================
+
+Run date      : 2026-09-15 18:03 IST
+Machine       : macOS (darwin 23.3.0, arm64)
+Node          : v24.13.1
+pnpm          : 9.15.0
+PostgreSQL    : 17.11 (Homebrew, running as a local service)
+Next.js       : 16.3.5
+Prisma        : 7.10.0 (CLI and @prisma/client)
+Clerk         : @clerk/nextjs 7.9.2
+
+Every result below was produced by actually running the command shown.
+Nothing here is asserted without having been executed.
+
+===============================================================================
+SUMMARY
+===============================================================================
+
+  Installation ................................. PASS
+  Environment setup ............................ PASS (with one caveat, below)
+  Development server ........................... PASS
+  Type checking ................................ PASS
+  Lint ......................................... PASS
+  Formatting ................................... PASS
+  Prisma generate .............................. PASS
+  Prisma validate .............................. PASS
+  Prisma migrate ............................... PASS
+  Live database round-trip ..................... PASS
+  Production build ............................. PASS
+  Unit tests ................................... PASS  (86/86)
+  E2E — API level .............................. PASS  (5/5)
+  E2E — browser level .......................... BLOCKED (25 skipped)
+
+  ONE BLOCKER: browser E2E cannot run without real Clerk API keys.
+  Full detail in the "BLOCKED" section at the end of this file.
+
+===============================================================================
+1. INSTALLATION
+===============================================================================
+
+COMMAND : pnpm install
+RESULT  : PASS
+
+  Done in 1.6s
+  postinstall ran `prisma generate`:
+  ✔ Generated Prisma Client (v7.10.0) to ./src/generated/prisma in 37ms
+
+  Notes
+  -----
+  * `@prisma/client-runtime-utils` is declared as a DIRECT dependency. With
+    pnpm's isolated node_modules, the Prisma client generated into src/ cannot
+    resolve a transitive dependency of @prisma/client. Without this the client
+    fails at runtime with MODULE_NOT_FOUND.
+  * Unused packages were removed during cleanup: clsx, tailwind-merge
+    (superseded by the `cn` package shadcn now ships), @vitejs/plugin-react and
+    vite-tsconfig-paths (Vite 7 resolves tsconfig paths natively).
+
+-------------------------------------------------------------------------------
+ENVIRONMENT SETUP
+-------------------------------------------------------------------------------
+
+COMMAND : cp .env.example .env  (a working .env is already present)
+RESULT  : PASS for the database; PLACEHOLDER for Clerk
+
+  DATABASE_URL ......................... REAL, working (local PostgreSQL)
+  NEXT_PUBLIC_APP_URL .................. REAL
+  LOG_LEVEL ............................ REAL
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY .... PLACEHOLDER — not a real instance
+  CLERK_SECRET_KEY ..................... PLACEHOLDER — not a real instance
+  CLERK_WEBHOOK_SIGNING_SECRET ......... not set (optional)
+
+  The Clerk placeholders are syntactically valid so the server boots and route
+  protection is genuinely demonstrable. They are NOT functional keys.
+
+  Environment validation itself was verified by unit test: a missing or
+  malformed variable throws with every problem named at once.
+
+  Local database created with:
+    createdb life_os
+    psql -d postgres -c "CREATE ROLE life_os LOGIN PASSWORD '…' CREATEDB;"
+
+===============================================================================
+2. DEVELOPMENT
+===============================================================================
+
+COMMAND : pnpm dev
+RESULT  : PASS
+
+  ▲ Next.js 16.3.5 (Turbopack)
+  - Local:        http://localhost:3000
+  ✓ Ready in 197ms
+
+  Verified by HTTP request against the running server:
+
+    GET /                    -> 200
+    GET /sign-in             -> 200
+    GET /does-not-exist      -> 404
+    GET /api/health          -> 200
+       {"success":true,"data":{"status":"ok","database":"reachable"},"error":null}
+
+    GET /overview            -> 307  location: /sign-in
+    GET /settings            -> 307  location: /sign-in
+    GET /tasks               -> 307  location: /sign-in
+    GET /onboarding          -> 307  location: /sign-in
+
+  Security headers present on every response:
+    X-Content-Type-Options: nosniff
+    X-Frame-Options: DENY
+    Referrer-Policy: strict-origin-when-cross-origin
+    Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+    Strict-Transport-Security: max-age=31536000; includeSubDomains
+    X-Powered-By: (absent, as intended)
+
+  Server log contained no errors or warnings.
+
+===============================================================================
+3. TYPE CHECKING
+===============================================================================
+
+COMMAND : pnpm typecheck        (tsc --noEmit)
+RESULT  : PASS — exit code 0, no output
+
+  TypeScript `strict` is on. There is no `any` in application code.
+  `typedRoutes` is enabled, so every <Link href> and router.push() is checked
+  against the real route tree.
+
+  Issues found and fixed during this phase:
+    * `LayoutProps<"/">` is a build-generated global; replaced with explicit
+      props so typecheck does not require a prior build.
+    * `eslint` key removed from NextConfig (gone in Next 16).
+    * Clerk `Appearance` derived from ClerkProvider rather than the deprecated
+      @clerk/types package.
+    * Route constants typed as `Route` with `satisfies Record<string, Route>`.
+
+===============================================================================
+4. LINT
+===============================================================================
+
+COMMAND : pnpm lint             (eslint)
+RESULT  : PASS — exit code 0, no output
+
+  Three genuine React Compiler violations were found and FIXED PROPERLY
+  (not suppressed):
+
+    1. src/hooks/use-mounted.ts
+       setState inside an effect -> rewritten with useSyncExternalStore.
+
+    2. src/hooks/use-detected-time-zone.ts (new)
+       Time-zone detection moved out of an effect into useSyncExternalStore;
+       the onboarding form now derives the value instead of synchronising it.
+
+    3. src/components/layout/mobile-nav.tsx
+       Effect-based "close on navigation" replaced with React's documented
+       adjust-state-during-render pattern.
+
+===============================================================================
+5. FORMATTING
+===============================================================================
+
+COMMAND : pnpm format:check     (prettier --check .)
+RESULT  : PASS
+
+  Checking formatting...
+  All matched files use Prettier code style!
+
+  prettier-plugin-tailwindcss sorts class lists. Excluded from formatting:
+  src/generated/ (Prisma output) and prisma/migrations/ (reformatting would
+  break the checksum Prisma compares against applied migrations).
+
+===============================================================================
+6. DATABASE
+===============================================================================
+
+COMMAND : pnpm db:generate      (prisma generate)
+RESULT  : PASS
+  ✔ Generated Prisma Client (v7.10.0) to ./src/generated/prisma in 33ms
+
+COMMAND : pnpm db:validate      (prisma validate)
+RESULT  : PASS
+  The schema at prisma/schema.prisma is valid 🚀
+
+COMMAND : pnpm db:migrate       (prisma migrate dev)
+RESULT  : PASS
+  Applied migration `20260915082111_init_profile_foundation`
+
+COMMAND : pnpm exec prisma migrate status
+RESULT  : PASS
+  Datasource "db": PostgreSQL database "life_os" at "localhost:5432"
+  1 migration found in prisma/migrations
+  Database schema is up to date!
+
+VERIFIED AGAINST THE LIVE DATABASE (psql \d profiles):
+
+  Table "public.profiles" — 16 columns, all defaults applied as designed
+  Indexes:
+    profiles_pkey                        PRIMARY KEY btree (id)
+    profiles_clerk_user_id_key           UNIQUE btree (clerk_user_id)
+    profiles_onboarding_completed_at_idx btree (onboarding_completed_at)
+  Enums created: "ThemePreference", "WeekStart"
+
+LIVE ROUND-TRIP THROUGH THE DRIVER ADAPTER (create -> count -> delete):
+
+  created: cmu2ern46000003jjk2yhds3h | tz: Asia/Kolkata | week: MONDAY
+           | theme: SYSTEM | workStart: 540
+  count: 1
+  deleted. count now: 0
+
+  This exercised @prisma/adapter-pg against real PostgreSQL, including the
+  enum defaults and the minutes-since-midnight integer columns. The test row
+  was removed; the database is clean.
+
+  Prisma 7 note: the connection URL is no longer allowed in schema.prisma.
+  It lives in prisma.config.ts for the CLI, and the application connects via
+  the @prisma/adapter-pg driver adapter in src/server/db.ts.
+
+===============================================================================
+7. PRODUCTION BUILD
+===============================================================================
+
+COMMAND : pnpm build            (next build)
+RESULT  : PASS — no errors, no warnings
+
+  ✓ Compiled successfully
+  Finished TypeScript
+  ✓ Generating static pages (17/17)
+
+  Routes built: 19
+    ○ /                          (static)
+    ○ /_not-found                (static)
+    ƒ /overview  /today  /calendar  /tasks  /academics  /work  /projects
+      /habits  /health  /finance  /ai  /settings        (dynamic)
+    ƒ /onboarding
+    ƒ /sign-in/[[...sign-in]]    ƒ /sign-up/[[...sign-up]]
+    ƒ /api/health                ƒ /api/webhooks/clerk
+    ƒ Proxy (Middleware)
+
+  REAL BUG CAUGHT BY THE BUILD
+  ----------------------------
+  The first build failed with:
+
+    Module not found: Can't resolve 'util/types'
+    Import trace (Client Component Browser):
+      pg -> @prisma/adapter-pg -> src/server/db.ts
+      -> src/services/profile/profile.service.ts -> src/server/auth.ts
+      -> src/server/action.ts -> src/features/onboarding/onboarding-form.tsx
+
+  A client form was importing its `ActionState` type from src/server/action.ts,
+  which dragged Prisma and the `pg` driver toward the browser bundle. This is
+  exactly what the `server-only` guard exists to catch.
+
+  FIX: src/types/action.ts now holds the types that cross the boundary and
+  imports nothing from src/server/. Verified fixed by re-running the build,
+  and guarded against regression by an E2E assertion that no secret string
+  appears in the served HTML.
+
+===============================================================================
+8. UNIT TESTS
+===============================================================================
+
+COMMAND : pnpm test             (vitest run)
+RESULT  : PASS
+
+   Test Files  8 passed (8)
+        Tests  86 passed (86)
+     Duration  433ms
+
+  Coverage by file:
+
+    tests/unit/env.test.ts ............. 13 tests
+       Server and client env parsing, defaults, missing values, wrong key
+       types (pk_ in the sk_ slot and vice versa), aggregated error reporting.
+
+    tests/unit/time.test.ts ............ 14 tests
+       Time-zone validation, minutes<->HH:mm round-trip, and the case the
+       whole product depends on: resolving "today" in the USER's zone.
+       Explicitly covers Asia/Kolkata's +05:30 half-hour offset across a
+       midnight boundary, which naive hour-based maths gets wrong.
+
+    tests/unit/errors.test.ts .......... 13 tests
+       Error taxonomy, HTTP status mapping, and the guarantee that matters:
+       a PrismaClientKnownRequestError's detail reaches the logs but its text
+       never reaches the user. Also asserts a connection string containing a
+       password is never surfaced.
+
+    tests/unit/logger.test.ts .......... 10 tests
+       Redaction as a security control: password/secret/token/authorization/
+       cookie/session/credential/signature/database_url keys, nested objects,
+       arrays, Error serialisation, depth truncation.
+
+    tests/unit/rate-limit.test.ts ...... 7 tests
+       Fixed-window behaviour with an injected clock — limit enforcement,
+       per-key isolation, window reset, retry-after never advertised as 0
+       while blocked.
+
+    tests/unit/navigation.test.ts ...... 12 tests
+       All 12 surfaces present, no duplicate hrefs, every item maps to a real
+       phase, nested-path resolution, and that /tasks-archive does NOT match
+       /tasks.
+
+    tests/unit/profile-schema.test.ts .. 16 tests
+       Onboarding and preferences validation: FormData string coercion,
+       trimming, zone rejection, minute-of-day bounds, window ordering
+       (including zero-length), partial-update semantics.
+
+    tests/unit/auth.test.ts ............ 7 tests
+       deriveDisplayName fallback chain: full name -> username -> email local
+       part -> neutral default, including whitespace-only inputs.
+
+  DELIBERATELY NOT UNIT TESTED
+  ----------------------------
+  Anything requiring a live Clerk session or a database is not tested against
+  a mock. A test asserting that a mock behaves like the mock proves nothing.
+  Those paths belong in Playwright, where they run for real.
+
+===============================================================================
+9. E2E TESTS
+===============================================================================
+
+COMMAND : pnpm test:e2e         (playwright test)
+RESULT  : 5 passed, 25 skipped
+
+  The suite runs against a real `next build && next start` — what is tested
+  is what would ship. Playwright Chromium is installed.
+
+-------------------------------------------------------------------------------
+9a. API-LEVEL TESTS — tests/e2e/api.spec.ts — 5/5 PASSED
+-------------------------------------------------------------------------------
+
+  These need no browser session and ran for real against the production
+  server and the live PostgreSQL database.
+
+  [PASS] the health endpoint reports the database is reachable
+         Real query against real PostgreSQL; exact API envelope asserted.
+  [PASS] the health endpoint is never cached
+  [PASS] the Clerk webhook rejects an unsigned payload
+         A forged `user.deleted` is refused, and the response body is checked
+         to contain no mention of svix/signing/secret/stack.
+  [PASS] responses carry the baseline security headers
+         All five headers asserted; X-Powered-By asserted absent.
+  [PASS] no server secret reaches the client bundle
+         Served HTML asserted to contain no sk_/postgresql://.
+
+-------------------------------------------------------------------------------
+9b. BROWSER TESTS — tests/e2e/smoke.spec.ts — 25 SKIPPED (see BLOCKED)
+-------------------------------------------------------------------------------
+
+  Written, complete, and correct. They skip with an explicit reason rather
+  than failing or being faked. Once real Clerk keys are set they run with no
+  code change.
+
+  Covered: landing page content and links, sign-in/sign-up rendering, all 13
+  protected routes redirecting to sign-in, the 404 page and its navigation,
+  theme switching and persistence across reload, horizontal-overflow checks
+  at 390 / 768 / 1280 / 1440 px, and accessibility basics (single h1,
+  landmark regions, visible focus).
+
+  Additional Playwright projects are configured (firefox, webkit,
+  mobile-chrome) but only chromium was installed and run here.
+
+===============================================================================
+BLOCKED — WHAT IS MISSING AND HOW TO FIX IT
+===============================================================================
+
+BLOCKED ITEM : Browser-level E2E tests (25 tests) and any real sign-in.
+
+WHAT IS MISSING
+  Real Clerk API keys. The committed .env holds syntactically valid
+  placeholders that no Clerk instance stands behind.
+
+WHY IT BLOCKS BROWSERS SPECIFICALLY
+  A Clerk development key (pk_test_…) makes the middleware perform a
+  "handshake": when the __clerk_db_jwt dev-browser cookie is missing, the
+  browser is redirected to the instance's Frontend API host to obtain it.
+  With the placeholder key that host does not exist, so Clerk answers:
+
+    {"errors":[{"message":"Invalid host",
+                "long_message":"We were unable to attribute this request to an
+                 instance running on Clerk...","code":"host_invalid"}]}
+
+  and the browser ends up on *.clerk.accounts.dev instead of the application.
+
+  This was diagnosed directly, by capturing the browser's console and final
+  URL — not inferred. Server-side requests (curl, the health endpoint,
+  Playwright's `request` fixture) are unaffected, which is why the API tests
+  pass and only browser tests are blocked.
+
+HOW TO FIX IT
+  1. Create an application at https://dashboard.clerk.com
+  2. Open API Keys and copy both values into .env:
+       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_…"
+       CLERK_SECRET_KEY="sk_test_…"
+  3. pnpm test:e2e
+
+  tests/e2e/clerk-env.ts detects a real instance by decoding the publishable
+  key, so the 25 skipped tests begin running automatically. No code change is
+  needed.
+
+WHAT WAS NOT DONE, AND WHY
+  Clerk was NOT mocked to make these tests go green. A mocked auth test
+  asserts only that the mock behaves like the mock. Skipping loudly with a
+  documented reason is the honest result.
+
+ALSO NOT COVERED (requires a signed-in session, i.e. real keys plus a test
+user): the authenticated app shell, the onboarding flow end-to-end, the
+settings form writing to the database, and the command palette. The wiring
+for this (@clerk/testing) is documented in docs/DEVELOPMENT.md but not
+installed, because it cannot be verified here.
+
+===============================================================================
+NOT VERIFIED IN THIS ENVIRONMENT
+===============================================================================
+
+  * Firefox and WebKit E2E — configured in playwright.config.ts, but only
+    the Chromium browser binary was installed.
+  * Lighthouse / Core Web Vitals — not run. No production deployment exists.
+  * Visual regression screenshots — not captured; the authenticated surfaces
+    they would cover are unreachable without Clerk keys.
+  * Manual screen-reader testing — automated a11y assertions only.
+  * The Clerk webhook's success path — the rejection path is tested; the
+    accept path needs a real signing secret and a real Clerk delivery.
+
+===============================================================================
+MANUAL SETUP STILL REQUIRED
+===============================================================================
+
+  1. REQUIRED — Clerk keys in .env (see BLOCKED above).
+  2. OPTIONAL — CLERK_WEBHOOK_SIGNING_SECRET, only if you want user.deleted
+     handled while the user is away. Without it the app stays correct via
+     just-in-time provisioning; the route simply refuses requests.
+  3. OPTIONAL — `pnpm exec playwright install firefox webkit` to run the
+     cross-browser projects.
+  4. NOTE — this directory is not a git repository. .gitignore is written and
+     correct (it excludes .env, src/generated/, build output and test
+     artifacts); run `git init` when you want history.
+
+===============================================================================
+END OF PHASE 1 TEST REPORT
+===============================================================================

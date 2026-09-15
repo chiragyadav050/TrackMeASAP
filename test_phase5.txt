@@ -1,0 +1,283 @@
+LIFE OS — PHASE 5 TEST REPORT (GOALS, HABITS, LIFE)
+===================================================
+
+Date:        2026-09-15
+Phase:       5 — Goals + Habits + Life (health, money, important dates)
+Verdict:     COMPLETE at the service, data and integration level.
+             Browser-level verification BLOCKED by the environment (see §8).
+
+
+1. WHAT WAS BUILT
+-----------------
+
+Data model (migration 20260915172648_add_goals_habits_life, applied to dev +
+test):
+
+  Goal            title, category, timeframe, status, targetDate, targetValue,
+                  currentValue, unit, achievedAt, archivedAt
+  GoalMilestone   goalId, title, dueDate, completedAt, sortOrder
+  Habit           kind (BUILD/QUIT), cadence, targetPerPeriod, weekdays[],
+                  targetAmount, reminderMinute, startDate, goalId
+  HabitLog        habitId + logDate UNIQUE, isCompleted, amount, note
+  DailyCheckIn    profileId + checkInDate UNIQUE, mood, energy, stress, sleep,
+                  water, exercise, steps, gratitude, highlight, notes
+  MoneyCategory   name, direction, monthlyBudgetMinor
+  MoneyEntry      direction, amountMinor, currency, entryDate, categoryId,
+                  subscriptionId
+  Subscription    amountMinor, cycle, nextChargeDate, cancelledAt
+  ImportantDate   kind, eventDate, isRecurring, remindDaysBefore
+
+  Task.goalId added with onDelete: SetNull.
+  `profileId` denormalised onto every nested record.
+
+Code:
+
+  src/services/life/habit.derive.ts   pure intelligence — no Prisma, no React
+  src/services/life/life.schema.ts    Zod schemas (isomorphic)
+  src/services/life/goal.service.ts   goal + milestone mutations
+  src/services/life/habit.service.ts  habit + logging mutations
+  src/services/life/money.service.ts  money, subscriptions, check-in, dates
+  src/services/life/habit.query.ts    habit/goal reads, streak calendar
+  src/services/life/money.query.ts    money reads, budgets, date rollover
+  src/services/life/life.query.ts     assembled Life views
+  src/features/life/actions.ts        server actions + typed commands
+  src/features/life/components/*      6 UI components
+  src/features/today/life-panel.tsx   Today integration
+  src/types/life.ts                   DTOs that cross the server boundary
+
+Surfaces: /habits, /goals, /goals/[goalId], /health, /finance, plus tiles on
+/today and /overview and a Life group in the ⌘K palette.
+
+
+2. TEST RESULTS
+---------------
+
+  Unit (Phase 5 only)          44 / 44   passed
+  Integration (Phase 5 only)   57 / 57   passed
+  ----------------------------------------------
+  Unit (whole project)        382 / 382  passed   (was 338 after Phase 4)
+  Integration (whole project) 299 / 299  passed   (was 242 after Phase 4)
+  E2E, environment-independent 52 / 52   passed   (was 32)
+  E2E, browser                372        SKIPPED — see §8
+
+  pnpm typecheck    clean
+  pnpm lint         clean (0 errors, 0 warnings)
+  pnpm format:check clean
+  pnpm build        succeeded; /goals, /goals/[goalId] in the route table
+  prisma migrate    applied to dev and test databases
+
+No test was weakened or skipped to make it pass.
+
+
+3. THE DECISIONS THE TESTS DEFEND
+---------------------------------
+
+3.1 Streaks are DERIVED, never stored
+  A stored streak silently becomes wrong the moment a log is back-dated,
+  edited or deleted — and users do all three. Every streak is recomputed from
+  HabitLog rows on read.
+
+3.2 Three states per day, not two
+  DONE, deliberately MISSED, and UNANSWERED are distinct and stored
+  distinctly. Collapsing "haven't got to it yet" into "skipped" would make
+  every completion rate a lie. Verified: logging a miss, then clearing it,
+  returns the day to unanswered — not to done.
+
+3.3 Today unanswered does not break a streak; an explicit miss does
+  The day is still running. Treating silence at 9am as failure would be both
+  wrong and demoralising. But an unanswered day in the PAST is a miss —
+  otherwise a user who simply stopped logging would keep a growing streak.
+
+3.4 Unscheduled days cannot break a streak
+  Skipping Sunday on a weekdays-only habit is not a failure. Tested across a
+  real weekend.
+
+3.5 QUIT habits count differently from BUILD habits
+  For quitting, silence is SUCCESS — not smoking requires no action — so days
+  clean are counted from the last relapse, not from the last log. This is a
+  genuinely different algorithm (`daysClean` vs `calculateStreak`) and both
+  are tested against the same fixture data.
+
+3.6 Completion rate counts unanswered days as misses
+  Unlike a streak, a historical rate is a summary. Silently dropping ignored
+  days would report a flattering number that is not true. `null` — not 0% —
+  when nothing was scheduled in the window.
+
+3.7 The one-tap toggle never writes a miss
+  It cycles unanswered → done → unanswered. Recording a deliberate miss is a
+  separate menu action, so an accidental double-tap cannot write a failure
+  into someone's history.
+
+3.8 Goal progress is measured, milestone-based, or honestly null
+  A measured goal uses its numbers; an unmeasured one counts milestones; a
+  goal with neither returns `null` and the UI says "add a target number or
+  some milestones" rather than drawing a 0% bar. Hitting a target marks a goal
+  achieved — but dropping below it never un-achieves one, because the user
+  declared it met and a later correction to the count does not overrule that.
+
+
+4. MONEY CORRECTNESS
+--------------------
+
+AMOUNTS ARE INTEGER MINOR UNITS (paise) EVERYWHERE. Binary floating point
+cannot represent 0.1 exactly, and a personal finance tool whose monthly totals
+drift is worse than none.
+
+  - `parseMoneyToMinor` is the single conversion point. It ROUNDS the float
+    product rather than truncating: 19.99 × 100 is 1998.9999… in binary
+    floating point, and truncation would silently lose a paisa on a very
+    common price. Tested explicitly.
+  - Ten entries of 0.10 sum to exactly 100 minor units, verified against a
+    real database. The float equivalent gives 0.9999999999999999.
+  - Monthly totals come from database aggregates over integer columns, not
+    from summing rows in JavaScript.
+  - Currency is stored per entry, so a trip abroad is not silently added to
+    home-currency totals.
+  - A category with no budget is UNTRACKED, never "0% used" — which would
+    imply a limit of zero, i.e. permanently over.
+  - Deleting a category keeps its entries (SetNull): the money really did
+    leave the account; only the bucket is gone.
+  - Subscription charges are recorded EXPLICITLY, never as a side effect of
+    loading a page — that would double-count on every refresh. A repeat charge
+    for the same date is refused, and the generated entry carries
+    `subscriptionId` so the duplicate check is exact.
+  - "Monthly" advances to the same date next month, not +30 days. Weekly
+    subscriptions normalise at 52/12, not ×4, which would understate the year.
+  - Recurring important dates keep their ORIGINAL year, so "turning 21" stays
+    computable; the next occurrence is derived and rolls to next year once
+    this year's has passed. All four behaviours tested.
+
+
+5. SECURITY / OWNERSHIP
+-----------------------
+
+tests/integration/life-authorization.test.ts — 18 tests. An "intruder"
+profile is a real second row in the database and attacks with VALID ids.
+
+  - Every ownership guard returns NOT_FOUND, never FORBIDDEN, asserted on the
+    error CODE. "Forbidden" would confirm the id exists and turn a guessed id
+    into an existence oracle.
+  - Reads: goals, habits, goal detail, money summary, categories,
+    subscriptions, important dates, check-ins and search all return
+    empty/null for another user.
+  - **Habit LOGGING is rejected** — a streak cannot be forged on someone
+    else's habit, via `logHabit`, `toggleHabitToday` or `clearHabitLog`.
+  - Money totals cannot be polluted: an intruder's summary reads zero with the
+    owner's entries present in the same table.
+  - A subscription charge cannot be recorded against another user's
+    subscription, and no expense lands in their books.
+  - Grafting attacks, all refused: a habit onto another user's goal; their OWN
+    habit moved onto another user's goal; a milestone onto another user's
+    goal; an entry filed under another user's category; a subscription charge
+    filed under another user's category.
+  - Every write test re-reads the record afterwards to confirm it was
+    untouched.
+  - Unauthenticated GETs of /habits, /goals, /goals/<id>, /health and /finance
+    return non-200 and contain no user data (tests/e2e/api.spec.ts).
+  - Financial amounts are deliberately NOT written into activity-log metadata.
+  - Filters from the URL are parsed with the same Zod schema the actions use.
+
+
+6. PERFORMANCE
+--------------
+
+  - `listHabits` issues ONE query for habits and ONE for all their logs; the
+    per-habit maths runs in memory, so cost does not grow with habit count.
+  - `listGoals` gets milestone, habit and task counts from three GROUPED
+    queries over the whole page, not three per goal.
+  - `getMoneySummary` uses five parallel queries and database aggregates; the
+    month's rows are never loaded just to add them up.
+  - `getLifeOverview` runs its six unrelated slices in parallel.
+
+
+7. DEFECTS FOUND AND FIXED DURING THIS PHASE
+--------------------------------------------
+
+  1. **Streak history was silently truncated.** The habit-log query originally
+     loaded only the last ~37 days, but `calculateStreak` walks the calendar
+     from the habit's start — so every day before the window counted as a miss
+     and `longestStreak` would have reported the best of the last month as a
+     lifetime personal best. Fixed by loading the full history with an
+     explicit `MAX_LOGS_PER_PAGE` cap and a documented
+     `MAX_STREAK_WINDOW_DAYS` bound that can only ever UNDERSTATE a streak,
+     never inflate one. Found by reading the code, not by a failing test —
+     recorded here because it would have been invisible to a user for months.
+
+  2. `fieldAria(name)` was called with one argument in five places; the helper
+     requires an options object. Caught by typecheck.
+
+  3. A Phase 1 test pinned the navigation list to twelve surfaces. Adding
+     Goals is an intended Phase 5 change, so the ASSERTION was updated (and
+     its comment now explains why the list is pinned at all). The nav config
+     was not weakened to satisfy an out-of-date test.
+
+  4. `scheduledPerWeek` was imported but unused in the query layer after a
+     refactor. Removed rather than suppressed.
+
+
+8. HONEST LIMITATIONS — WHAT COULD NOT BE VERIFIED
+--------------------------------------------------
+
+BROWSER-LEVEL TESTING REMAINS BLOCKED. Unchanged from Phase 4, and re-checked
+this session:
+
+  Cause 1 — Clerk. The publishable key is a placeholder encoding
+  "placeholder-not-a-real-instance.clerk.accounts.dev". Clerk's development
+  handshake redirects any browser without the `__clerk_db_jwt` cookie to that
+  Frontend API host, which does not exist.
+
+  Cause 2 — No browser automation. `list_connected_browsers` returned `[]`
+  again this session, so manual driving of the UI was not possible either.
+
+  Response: Clerk was NOT mocked. A mocked session would produce a green suite
+  that verifies nothing. The 22 Phase 5 browser specs in tests/e2e/life.spec.ts
+  are written and will run unchanged the moment real keys are present. Five new
+  anonymous-access guards for the Phase 5 routes run and pass today.
+
+  UNVERIFIED BY EXECUTION: visual rendering, dark mode, the 320/768/1440
+  breakpoints, dialog submit flows in a real browser, keyboard navigation on
+  the new surfaces, toast copy as a user sees it.
+
+  VERIFIED for the UI: it compiles, type-checks, lints clean under the React
+  Compiler rules, and the production build renders every route. The logic
+  those screens display is covered by the 101 Phase 5 tests above.
+
+OTHER ENVIRONMENT GAPS (recorded for later phases):
+  - No Gemini API key            → Phase 8 live verification will be blocked
+  - No Telegram bot token        → Phase 7 live verification will be blocked
+  - Redis installed but stopped  → startable; Phase 6 will need it running
+
+
+9. REGRESSION — PHASES 1-4
+--------------------------
+
+  Unit          382 / 382  passed
+  Integration   299 / 299  passed
+  E2E (runnable) 52 / 52   passed
+  Build, typecheck, lint, format — all clean
+
+No Phase 1-4 file was rewritten. Edits outside src/services/life and
+src/features/life were additive: Goals added to the navigation config, real
+Goals/Habits/Finance tiles replacing placeholders on the Overview grid, a Life
+panel on Today, a Life group in the command palette, and one navigation test
+assertion updated to match the intended new surface.
+
+
+10. COMPLETION RATING
+---------------------
+
+  Data model and migrations           100%
+  Derive / intelligence layer         100%  (44 unit tests)
+  Service layer and ownership         100%  (57 integration tests)
+  Query layer and aggregation         100%
+  Server actions                      100%
+  UI implementation                   100%  built, typed, linted, builds
+  UI verified in a real browser          0%  BLOCKED — §8
+  Cross-surface integration           100%  Today, Overview, search, palette
+
+  Overall Phase 5:  ~90% verified.
+
+  The missing 10% is not unfinished work; it is work that cannot be confirmed
+  in this environment.
+
+Phase 6 may begin.
