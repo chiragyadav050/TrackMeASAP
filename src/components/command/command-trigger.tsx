@@ -21,6 +21,7 @@ export function CommandTrigger() {
         variant="outline"
         size="sm"
         onClick={open}
+        data-tour="command-palette"
         className="hidden w-56 justify-start gap-2 font-normal text-muted-foreground sm:flex"
       >
         <Search className="size-3.5" aria-hidden />

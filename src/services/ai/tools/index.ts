@@ -7,7 +7,12 @@ import { db } from "@/server/db";
 import { getAcademicOverview } from "@/services/academics/academic.query";
 import { EXAM_TYPES } from "@/services/academics/academic.schema";
 import { createExam } from "@/services/academics/exam.service";
-import { getCurrentSemester } from "@/services/academics/semester.service";
+import {
+  createSemester,
+  createSubject,
+  getCurrentSemester,
+  setCurrentSemester,
+} from "@/services/academics/semester.service";
 import {
   getGoalDetail,
   listGoals,
@@ -259,6 +264,126 @@ export function registerAllTools(): void {
     handler: async (_args, { profile }) => {
       const overview = await getAcademicOverview(profile);
       return overview.attendance;
+    },
+  });
+
+  /**
+   * Starting a semester.
+   *
+   * Every other academic record hangs off one, so this is the tool that
+   * unblocks the rest — subjects, exams, attendance and assignments all
+   * require a semester to exist first.
+   *
+   * MADE CURRENT BY DEFAULT because that is what someone setting up their
+   * term means, and because a semester that is not current is invisible to
+   * most of the app. `setCurrentSemester` demotes any previous one inside a
+   * transaction, so the "exactly one current" rule holds.
+   */
+  registerTool({
+    name: "semester.create",
+    description:
+      "Start a new semester. Everything academic — subjects, exams, attendance — belongs to one, so create this before them.",
+    schema: z.object({
+      name: z.string().min(1).max(80),
+      academicYear: z.string().min(1).max(20),
+      startDate: dateSchema,
+      endDate: dateSchema,
+      makeCurrent: z.boolean().default(true),
+    }),
+    risk: "SAFE",
+    summarise: (args) => `Start the semester "${args.name}"`,
+    handler: async (args, { profile }) => {
+      if (args.endDate <= args.startDate) {
+        throw new Error(
+          "A semester has to end after it starts. Check the two dates.",
+        );
+      }
+
+      const semester = await createSemester(profile.id, {
+        name: args.name,
+        academicYear: args.academicYear,
+        startDate: args.startDate,
+        endDate: args.endDate,
+        status: "ACTIVE",
+      } as never);
+
+      if (args.makeCurrent) {
+        await setCurrentSemester(profile.id, semester.id);
+      }
+
+      return {
+        id: semester.id,
+        name: semester.name,
+        isCurrent: args.makeCurrent,
+      };
+    },
+  });
+
+  /**
+   * Adding a subject to the current semester.
+   *
+   * The semester is resolved SERVER-SIDE for the same reason it is in
+   * `exam.create`: a semester id is not something a user says out loud, and a
+   * model inventing one would either fail an ownership check or aim at a real
+   * id belonging to someone else.
+   *
+   * The attendance threshold defaults to 75 because that is the common
+   * requirement, and because the alternative — asking the model to guess a
+   * number that governs a real warning — is worse.
+   */
+  registerTool({
+    name: "subject.create",
+    description:
+      "Add a subject to the user's current semester. Requires a current semester to exist.",
+    schema: z.object({
+      name: z.string().min(1).max(120),
+      code: z.string().max(30).optional(),
+      facultyName: z.string().max(120).optional(),
+      credits: z.number().int().min(0).max(50).optional(),
+      attendanceThreshold: z.number().min(0).max(100).default(75),
+    }),
+    risk: "SAFE",
+    summarise: (args) => `Add the subject "${args.name}"`,
+    handler: async (args, { profile }) => {
+      const semester = await getCurrentSemester(profile.id);
+
+      if (!semester) {
+        throw new Error(
+          "There is no current semester, and a subject has to belong to one. Ask me to start a semester first.",
+        );
+      }
+
+      // A duplicate name inside one semester is almost always a repeat
+      // request rather than a real second subject. Returning the existing one
+      // keeps "add Maths" idempotent instead of quietly building a pile.
+      const existing = await db.subject.findFirst({
+        where: {
+          profileId: profile.id,
+          semesterId: semester.id,
+          name: { equals: args.name, mode: "insensitive" },
+        },
+        select: { id: true, name: true },
+      });
+
+      if (existing) {
+        return { ...existing, semester: semester.name, alreadyExisted: true };
+      }
+
+      const subject = await createSubject(profile.id, {
+        semesterId: semester.id,
+        name: args.name,
+        code: args.code,
+        facultyName: args.facultyName,
+        credits: args.credits,
+        attendanceThreshold: args.attendanceThreshold,
+      } as never);
+
+      return {
+        id: subject.id,
+        name: subject.name,
+        semester: semester.name,
+        alreadyExisted: false,
+      };
     },
   });
 

@@ -2,7 +2,7 @@
 
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import { Field, fieldAria } from "@/components/form/field";
 import { NativeSelect } from "@/components/form/native-select";
@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { completeOnboardingAction } from "@/features/settings/actions";
+import { AcademicStep } from "@/features/onboarding/academic-step";
 import { routes } from "@/config/site";
 import { IDLE_ACTION_STATE, type ActionState } from "@/types/action";
 import { useDetectedTimeZone } from "@/hooks/use-detected-time-zone";
@@ -53,13 +54,19 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
   const router = useRouter();
   const timeZones = useMemo(() => listTimeZones(), []);
 
-  // Navigation happens here rather than via `redirect()` inside the action so
-  // that a failed submit can re-render the form with its field errors intact.
-  useEffect(() => {
-    if (state.status === "success") {
-      router.replace(routes.overview);
-    }
-  }, [state, router]);
+  /**
+   * Which of the two stages is on screen — DERIVED, not stored.
+   *
+   * The profile stage is a real `<form>` posting to a server action; the
+   * academic stage calls a different one. Splitting them is what lets the
+   * second be genuinely optional: skipping it still leaves a completed
+   * profile, because that was already saved by the time this advances.
+   *
+   * Advancing on the action's own result rather than redirecting from inside
+   * the action means a failed submit re-renders the form with its field
+   * errors intact.
+   */
+  const stage = state.status === "success" ? "academics" : "profile";
 
   // The browser's zone is only knowable on the client. Reading it through a
   // store (rather than assigning it in an effect) means the server renders the
@@ -85,8 +92,19 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
       ? (fieldErrors?._form?.join(" ") ?? state.message)
       : null;
 
+  if (stage === "academics") {
+    return (
+      <div className="space-y-7">
+        <StageIndicator current={2} />
+        <AcademicStep onDone={() => router.replace(routes.overview)} />
+      </div>
+    );
+  }
+
   return (
     <form action={formAction} className="space-y-7" noValidate>
+      <StageIndicator current={1} />
+
       {formError ? (
         <Alert variant="destructive">
           <AlertDescription>{formError}</AlertDescription>
@@ -211,5 +229,38 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
         </p>
       </div>
     </form>
+  );
+}
+
+/**
+ * Where the user is in setup.
+ *
+ * Two steps is few enough that a bare "1 of 2" would do, but the bars carry
+ * one thing a number cannot: that the second step is short. People abandon
+ * setup when they cannot see the end of it.
+ *
+ * `aria-hidden` on the bars with the count read out instead — a screen reader
+ * gets the fact, not a description of two rectangles.
+ */
+function StageIndicator({ current }: { readonly current: 1 | 2 }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-label font-medium text-muted-foreground">
+        Step {current} of 2
+      </p>
+
+      <div className="flex gap-1.5" aria-hidden>
+        {[1, 2].map((step) => (
+          <span
+            key={step}
+            className={
+              step <= current
+                ? "h-1 flex-1 rounded-full bg-brand"
+                : "h-1 flex-1 rounded-full bg-border"
+            }
+          />
+        ))}
+      </div>
+    </div>
   );
 }

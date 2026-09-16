@@ -78,6 +78,7 @@ export function QuickCapture({
         maxLength={200}
         placeholder="What needs to be done?"
         aria-label="Task title"
+        data-tour="quick-capture"
         className="h-8 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
         onKeyDown={(event) => {
           // ⌘↵ / Ctrl+↵ escalates to the full form with the text carried over.

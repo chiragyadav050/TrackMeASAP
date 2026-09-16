@@ -65,6 +65,13 @@ model Profile {
 
   onboardingCompletedAt DateTime? @map("onboarding_completed_at")
 
+  /// When the first-run product tour was finished or dismissed.
+  ///
+  /// Server-persisted rather than kept in localStorage so the tour does not
+  /// reappear on a second device, and so dismissing it is a real decision the
+  /// product remembers rather than a browser detail.
+  tourCompletedAt DateTime? @map("tour_completed_at")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

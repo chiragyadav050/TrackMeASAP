@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 
-import { createAuthenticatedAction } from "@/server/action";
+import {
+  createAuthenticatedAction,
+  createAuthenticatedCommand,
+} from "@/server/action";
 import {
   onboardingSchema,
   preferencesSchema,
@@ -10,6 +13,7 @@ import {
 } from "@/services/profile/profile.schema";
 import {
   completeOnboarding,
+  completeTour,
   toProfileDto,
   updatePreferences,
 } from "@/services/profile/profile.service";
@@ -86,3 +90,20 @@ export async function persistThemePreferenceAction(
     });
   }
 }
+
+/**
+ * Dismisses the first-run tour.
+ *
+ * No arguments: there is nothing to say beyond "this user is done with it",
+ * and an action that accepted a profile id would be an ownership hole. The
+ * identity comes from the session like every other action here.
+ */
+export const completeTourCommand = createAuthenticatedCommand({
+  name: "profile.completeTour",
+  schema: z.object({}),
+  handler: async (_input, { profile }): Promise<ProfileDto> => {
+    const updated = await completeTour(profile.id);
+    revalidatePath("/", "layout");
+    return toProfileDto(updated);
+  },
+});

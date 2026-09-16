@@ -41,6 +41,9 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
                   <Link
                     href={item.href}
                     onClick={onNavigate}
+                    // Anchors the first-run tour. Derived from the route so a
+                    // renamed label never silently detaches a tour step.
+                    data-tour={item.href.replace("/", "")}
                     aria-current={isActive ? "page" : undefined}
                     className={cn(
                       "group relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-meta transition-colors",

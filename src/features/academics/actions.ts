@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { validationFailed } from "@/lib/errors";
+
 import {
   createAuthenticatedAction,
   createAuthenticatedCommand,
@@ -684,5 +686,75 @@ export const searchAcademicsCommand = createAuthenticatedCommand({
     { profile },
   ): Promise<readonly AcademicSearchResult[]> => {
     return searchAcademics(profile, input.query, input.limit);
+  },
+});
+
+/**
+ * First-run academic setup.
+ *
+ * ONE COMMAND, ONE TRANSACTION-SHAPED OUTCOME. Onboarding asks for a semester
+ * and its subjects together, and a half-finished setup — a semester with no
+ * subjects because the second call failed — is worse than none: the user
+ * lands on a dashboard that looks configured but has nothing in it.
+ *
+ * Deliberately separate from `completeOnboardingAction`, which owns the
+ * profile. Mixing "who you are" with "what you study" into one action would
+ * couple two independently valid states: a user may finish onboarding and
+ * skip academics entirely, and that must not look like a failure.
+ *
+ * Subject names are de-duplicated case-insensitively because "Maths, maths"
+ * is a typo, not two subjects.
+ */
+export const setUpAcademicsCommand = createAuthenticatedCommand({
+  name: "academics.setUp",
+  schema: z.object({
+    name: z.string().min(1).max(80),
+    academicYear: z.string().min(1).max(20),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD."),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD."),
+    subjects: z.array(z.string().min(1).max(120)).max(20).default([]),
+  }),
+  handler: async (input, { profile }) => {
+    if (input.endDate <= input.startDate) {
+      throw validationFailed({
+        endDate: ["The semester must end after it starts."],
+      });
+    }
+
+    const semester = await createSemester(profile.id, {
+      name: input.name,
+      academicYear: input.academicYear,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      status: "ACTIVE",
+    } as never);
+
+    // Made current immediately: a semester nobody has selected is invisible to
+    // every academic surface, which would leave the user right back where
+    // onboarding was meant to take them past.
+    await setCurrentSemester(profile.id, semester.id);
+
+    const seen = new Set<string>();
+
+    for (const raw of input.subjects) {
+      const name = raw.trim();
+      const key = name.toLowerCase();
+
+      if (!name || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+
+      await createSubject(profile.id, {
+        semesterId: semester.id,
+        name,
+        attendanceThreshold: 75,
+      } as never);
+    }
+
+    revalidatePath("/", "layout");
+
+    return { semesterId: semester.id, subjectsCreated: seen.size };
   },
 });

@@ -39,6 +39,7 @@ export function toProfileDto(profile: Profile): ProfileDto {
     studyHoursStart: profile.studyHoursStart,
     studyHoursEnd: profile.studyHoursEnd,
     hasCompletedOnboarding: profile.onboardingCompletedAt !== null,
+    hasCompletedTour: profile.tourCompletedAt !== null,
   };
 }
 
@@ -175,4 +176,28 @@ function normaliseTimeZone(timeZone: string): string {
   });
 
   return DEFAULT_TIME_ZONE;
+}
+
+/**
+ * Marks the first-run tour as finished or dismissed.
+ *
+ * STAMPED ONCE. Like `onboardingCompletedAt`, a second call must not move the
+ * timestamp: the interesting fact is when the user first got past the tour,
+ * and re-stamping would let a stray call resurrect it.
+ */
+export async function completeTour(profileId: string): Promise<Profile> {
+  const existing = await db.profile.findUnique({ where: { id: profileId } });
+
+  if (!existing) {
+    throw notFound("Profile");
+  }
+
+  if (existing.tourCompletedAt) {
+    return existing;
+  }
+
+  return db.profile.update({
+    where: { id: profileId },
+    data: { tourCompletedAt: new Date() },
+  });
 }

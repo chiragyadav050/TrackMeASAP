@@ -21,6 +21,8 @@ export type ProfileDto = {
   readonly studyHoursStart: number;
   readonly studyHoursEnd: number;
   readonly hasCompletedOnboarding: boolean;
+  /** Whether the first-run tour has been finished or dismissed. */
+  readonly hasCompletedTour: boolean;
 };
 
 export type { ThemePreference, WeekStart };

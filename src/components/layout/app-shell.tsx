@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { CommandPaletteProvider } from "@/components/command/command-palette-provider";
+import { ProductTour } from "@/features/tour/product-tour";
 import { AppHeader } from "@/components/layout/app-header";
 import { AppMark } from "@/components/layout/app-mark";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
@@ -68,6 +69,12 @@ export function AppShell({
             </main>
           </div>
         </div>
+        {/*
+          Rendered only for a profile that has not finished the tour, so the
+          component is absent rather than self-hiding — no overlay logic runs
+          for the overwhelming majority of sessions.
+        */}
+        {profile.hasCompletedTour ? null : <ProductTour />}
       </CommandPaletteProvider>
     </TaskDialogProvider>
   );
