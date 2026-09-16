@@ -37,10 +37,16 @@ export function EmptyState({
       )}
     >
       {Icon ? (
+        /*
+          A ringed mark rather than a plain bordered square. The offset ring
+          reads as deliberate punctuation on an otherwise blank surface, which
+          is the whole job here: an empty state has to look designed, or it
+          looks broken.
+        */
         <div
           className={cn(
-            "flex items-center justify-center rounded-xl border border-border-subtle bg-surface-sunken text-muted-foreground",
-            size === "compact" ? "size-9" : "size-11",
+            "flex items-center justify-center rounded-full bg-surface-sunken text-muted-foreground ring-1 ring-border-subtle ring-offset-4 ring-offset-surface",
+            size === "compact" ? "size-9" : "size-12",
           )}
           aria-hidden
         >
@@ -48,11 +54,16 @@ export function EmptyState({
         </div>
       ) : null}
 
-      <div className="space-y-1">
+      <div className={cn("space-y-1.5", size === "page" && "pt-1")}>
         <p
           className={cn(
-            "font-medium text-foreground",
-            size === "page" && "text-heading",
+            "text-foreground",
+            size === "page"
+              ? // The display face earns its place here: on a full-page empty
+                // state the title is the only thing to look at, so it should
+                // carry the product's voice rather than sit at body weight.
+                "font-display text-heading"
+              : "font-medium",
           )}
         >
           {title}

@@ -35,10 +35,21 @@ export function SectionCard({
     <section
       className={cn(
         "flex flex-col overflow-hidden rounded-xl border border-border bg-surface",
+        // A whisper of elevation on top of the hairline border. The border
+        // still does the structural work; the shadow only separates the panel
+        // from the page so a grid of these reads as instruments sitting ON
+        // something rather than holes cut into it.
+        "elevation-1",
         className,
       )}
     >
-      <header className="flex items-start justify-between gap-3 border-b border-border-subtle px-4 py-3">
+      {/*
+        The header sits on the sunken tone rather than the card surface. One
+        token's worth of difference is enough to read as a distinct band,
+        which is what lets the title stay small without getting lost — far
+        quieter than the usual heavier border or bolder weight.
+      */}
+      <header className="flex items-start justify-between gap-3 border-b border-border-subtle bg-surface-sunken/40 px-4 py-3">
         <div className="min-w-0 space-y-0.5">
           <h2 className="flex items-center gap-2 text-meta font-medium tracking-tight">
             {Icon ? (

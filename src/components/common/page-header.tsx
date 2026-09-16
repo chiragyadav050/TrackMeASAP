@@ -15,9 +15,15 @@ type PageHeaderProps = {
 /**
  * The standard opening of every application page.
  *
- * Hierarchy here comes from scale and weight — a large tight-tracked title
- * against small muted supporting text — rather than from wrapping the header
- * in yet another card.
+ * Hierarchy comes from SCALE CONTRAST, not from boxing the header in a card.
+ * The title sits two full steps above the supporting text in the display
+ * serif, which does three things at once: it gives the product a voice, it
+ * separates "where am I" from "what is here" at a glance, and it means the
+ * dense working UI below can stay quiet without the page reading as flat.
+ *
+ * The eyebrow is a hairline rule plus a caps label rather than another line of
+ * text. A rule is cheaper to scan than a word and gives the block a top edge,
+ * which is what stops a large title from floating.
  */
 export function PageHeader({
   title,
@@ -27,29 +33,38 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <div
+    <header
       className={cn(
-        "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between",
+        "flex flex-col gap-5 pb-2 sm:flex-row sm:items-end sm:justify-between sm:gap-8",
         className,
       )}
     >
-      <div className="min-w-0 space-y-1.5">
+      <div className="min-w-0 space-y-2">
         {eyebrow ? (
-          <div className="text-label-caps text-muted-foreground">{eyebrow}</div>
+          <div className="flex items-center gap-2.5">
+            <span aria-hidden className="h-px w-6 shrink-0 bg-border-strong" />
+            <span className="text-label-caps tracking-[0.12em] text-muted-foreground">
+              {eyebrow}
+            </span>
+          </div>
         ) : null}
 
-        <h1 className="text-title font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-display text-title text-balance text-foreground">
+          {title}
+        </h1>
 
         {description ? (
-          <p className="max-w-2xl text-pretty text-muted-foreground">
+          <p className="max-w-xl text-meta leading-relaxed text-pretty text-muted-foreground">
             {description}
           </p>
         ) : null}
       </div>
 
       {actions ? (
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        <div className="flex shrink-0 items-center gap-2 sm:pb-1">
+          {actions}
+        </div>
       ) : null}
-    </div>
+    </header>
   );
 }

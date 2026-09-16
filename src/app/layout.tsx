@@ -1,6 +1,6 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import type { ReactNode } from "react";
 
 import { ThemeProvider } from "@/components/theme/theme-provider";
@@ -13,8 +13,18 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import "./globals.css";
 
 /**
- * Both faces are self-hosted by `next/font`, so there is no render-blocking
- * request to a font CDN and no layout shift from a late swap.
+ * All three faces are self-hosted by `next/font`, so there is no
+ * render-blocking request to a font CDN and no layout shift from a late swap.
+ *
+ * THE PAIRING IS THE POINT. Geist alone is competent and anonymous — it is
+ * what every dashboard built this decade uses, and a product made entirely of
+ * it reads as a template no matter how good the spacing is. A serif carrying
+ * the display line gives the interface a voice while the dense working UI
+ * stays in a face built for density.
+ *
+ * Instrument Serif ships a single weight, which is a constraint worth having:
+ * it can only ever be used large, so it cannot leak into body copy and muddy
+ * the hierarchy it exists to create.
  */
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,6 +35,13 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument",
+  subsets: ["latin"],
+  weight: "400",
   display: "swap",
 });
 
@@ -54,8 +71,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     // `suppressHydrationWarning` is required by next-themes: its pre-paint
     // script mutates the class list before React hydrates, and without this
     // React would warn about the intentional mismatch on every load.
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} min-h-dvh`}>
+    // THE FONT VARIABLES BELONG ON `html`, NOT `body`.
+    //
+    // `globals.css` sets `html { font-family: var(--font-geist-sans) … }`, and
+    // a custom property declared on `body` is invisible to its own parent. The
+    // reference resolved to nothing and the entire application rendered in the
+    // browser's default serif — Times — while every class name looked correct.
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="min-h-dvh">
         <ClerkProvider
           publishableKey={NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
           appearance={clerkAppearance}

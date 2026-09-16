@@ -140,18 +140,41 @@ export function ProductTour() {
     return null;
   }
 
-  // Below the target when there is room, above it otherwise. Clamped to the
-  // viewport so the panel is never half off-screen on a small display.
+  // BESIDE THE TARGET FIRST, below it second.
+  //
+  // Most steps point at the sidebar, and a panel placed below a sidebar item
+  // lands directly on top of the rest of the navigation — covering the very
+  // thing the step is teaching. Preferring the side means the highlight and
+  // its explanation are visible at once, which is the entire point.
+  //
+  // Everything is clamped to the viewport, so the panel is never half
+  // off-screen on a narrow display.
   const PANEL_WIDTH = 320;
-  const GAP = 12;
+  const PANEL_HEIGHT = 190;
+  const GAP = 14;
 
-  const below = rect.top + rect.height + GAP;
-  const fitsBelow = below + 180 < window.innerHeight;
+  const fitsRight =
+    rect.left + rect.width + GAP + PANEL_WIDTH < window.innerWidth;
+  const belowTop = rect.top + rect.height + GAP;
+  const fitsBelow = belowTop + PANEL_HEIGHT < window.innerHeight;
 
-  const top = fitsBelow ? below : Math.max(GAP, rect.top - 180 - GAP);
-  const left = Math.min(
-    Math.max(GAP, rect.left),
-    Math.max(GAP, window.innerWidth - PANEL_WIDTH - GAP),
+  const clamp = (value: number, max: number): number =>
+    Math.min(Math.max(GAP, value), Math.max(GAP, max));
+
+  const top = clamp(
+    fitsRight
+      ? // Aligned to the target's top rather than centred: a panel that drifts
+        // upward from a short nav item reads as belonging to the item above it.
+        rect.top
+      : fitsBelow
+        ? belowTop
+        : rect.top - PANEL_HEIGHT - GAP,
+    window.innerHeight - PANEL_HEIGHT - GAP,
+  );
+
+  const left = clamp(
+    fitsRight ? rect.left + rect.width + GAP : rect.left,
+    window.innerWidth - PANEL_WIDTH - GAP,
   );
 
   return (

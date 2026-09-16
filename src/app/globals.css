@@ -90,12 +90,15 @@
 
   /* A scale with real contrast at the top and tight steps in the body range,
      so a dashboard can be dense without becoming flat. */
-  --text-display: 2.5rem;
-  --text-display--line-height: 1.08;
-  --text-display--letter-spacing: -0.032em;
-  --text-title: 1.5rem;
-  --text-title--line-height: 1.2;
-  --text-title--letter-spacing: -0.021em;
+  --text-display: 3.25rem;
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.028em;
+  /* The page-title step. Deliberately a long way below display and a long way
+     above heading: the jump is what creates hierarchy without boxing every
+     section in a card. */
+  --text-title: 2rem;
+  --text-title--line-height: 1.12;
+  --text-title--letter-spacing: -0.02em;
   --text-heading: 1.0625rem;
   --text-heading--line-height: 1.35;
   --text-heading--letter-spacing: -0.013em;
@@ -127,6 +130,14 @@
 
 :root {
   --radius: 0.625rem;
+
+  /* The editorial voice, used ONLY at display sizes — see layout.tsx.
+     DELIBERATELY NOT IN `@theme`: `--font-*` is Tailwind's own namespace, and
+     adding a key to it silently invalidated the whole theme block — every
+     font token, including --font-sans, resolved to nothing and the entire
+     application fell back to Times. An ordinary custom property plus the
+     `.font-display` utility keeps the same ergonomics with none of that. */
+  --font-editorial: var(--font-instrument), ui-serif, Georgia, serif;
 
   --background: oklch(0.994 0.0015 265);
   --foreground: oklch(0.205 0.012 265);
@@ -325,6 +336,61 @@
 
   .text-label-caps {
     @apply text-label font-medium uppercase;
+  }
+
+  /* The editorial display face. Applied by name rather than by element so it
+     can never leak into dense UI, where a single-weight serif would destroy
+     the hierarchy it exists to create. */
+  .font-display {
+    font-family: var(--font-editorial);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+
+  /* TABULAR FIGURES FOR ANYTHING THAT CHANGES.
+     Proportional digits shift width as they change — a percentage ticking
+     from 79% to 80%, a countdown, a running total — and the row jitters. This
+     is the difference between a page that feels engineered and one that feels
+     approximate. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Raised surfaces. A whisper of shadow rather than the usual grey smudge:
+     enough to lift a card off the page, never enough to announce itself.
+     Paired with the hairline border, not replacing it. */
+  .elevation-1 {
+    box-shadow:
+      0 1px 2px -1px rgb(0 0 0 / 0.06),
+      0 1px 1px -0.5px rgb(0 0 0 / 0.04);
+  }
+
+  .elevation-2 {
+    box-shadow:
+      0 2px 4px -2px rgb(0 0 0 / 0.08),
+      0 4px 12px -6px rgb(0 0 0 / 0.06);
+  }
+
+  /* Interactive lift. Transform-only so it stays on the compositor, and
+     disabled under reduced-motion rather than merely shortened — a card that
+     jumps is exactly what someone with vestibular sensitivity turned motion
+     off to avoid. */
+  .lift {
+    transition:
+      transform 180ms var(--ease-out-quart),
+      box-shadow 180ms var(--ease-out-quart),
+      border-color 180ms var(--ease-out-quart);
+  }
+
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lift:hover {
+      transform: none;
+    }
   }
 }
 
