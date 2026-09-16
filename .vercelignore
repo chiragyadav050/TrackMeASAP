@@ -1,0 +1,27 @@
+# Files that must never be uploaded to Vercel.
+#
+# `vercel deploy` uploads the working directory and does NOT honour
+# .gitignore, so without this file the local `.env` ships with every deploy.
+#
+# That is not theoretical. Vercel's own dashboard variables take precedence at
+# runtime, so the ones configured there stayed correct — but every variable
+# NOT configured there silently fell through to the local value. That is how
+# `REDIS_URL=redis://localhost:6379` reached production, where it made the app
+# believe a worker existed and left /api/health hanging against a Redis that
+# could never answer.
+#
+# The failure mode is quiet and asymmetric: the more complete the Vercel
+# config, the less you notice, until one missing variable is answered by a
+# developer laptop's connection string instead of erroring loudly.
+.env
+.env.*
+!.env.example
+
+# Local-only test and build artefacts. Harmless but pointless to upload, and
+# tests/e2e/.auth holds a real Clerk session.
+tests/e2e/.auth
+test-results
+playwright-report
+blob-report
+coverage
+.next
