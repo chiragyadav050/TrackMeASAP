@@ -54,6 +54,61 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_MODEL =
   process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
+/**
+ * JSON Schema keywords Gemini rejects outright.
+ *
+ * Its `parameters` field is not JSON Schema — it is a subset of the OpenAPI 3
+ * schema object, and an unknown keyword is a hard 400 for the WHOLE request,
+ * not a warning about one field. That is how every AI message came to fail
+ * with "Something went wrong": Zod 4 emits a `$schema` declaration, Gemini
+ * refused the payload, and all 45 tools went down with it.
+ *
+ * Stripped rather than avoided upstream on purpose. `toProviderTools()`
+ * produces correct, standard JSON Schema; it is this provider's job to adapt
+ * that to one vendor's dialect, so a second provider never inherits Gemini's
+ * limitations.
+ */
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "additionalProperties",
+  "const",
+  "examples",
+  "default",
+]);
+
+/**
+ * Recursively removes keywords Gemini cannot parse.
+ *
+ * Only the unknown keywords go: `type`, `description`, `enum`, `properties`,
+ * `required`, `items` and the rest of the supported subset pass through
+ * untouched, so the model still sees the real shape of each argument.
+ */
+function forGemini(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(forGemini);
+  }
+
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+      continue;
+    }
+
+    result[key] = forGemini(nested);
+  }
+
+  return result;
+}
+
 function getApiKey(): string | null {
   const key = process.env.GEMINI_API_KEY?.trim();
   return key && key.length > 0 ? key : null;
@@ -248,7 +303,7 @@ export class GeminiProvider implements AiProvider {
                 functionDeclarations: request.tools.map((tool) => ({
                   name: tool.name,
                   description: tool.description,
-                  parameters: tool.parameters,
+                  parameters: forGemini(tool.parameters),
                 })),
               },
             ],
