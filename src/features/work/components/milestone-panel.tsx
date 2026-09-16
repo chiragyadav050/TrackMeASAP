@@ -162,7 +162,7 @@ export function MilestonePanel({
                   ) : null}
                 </div>
 
-                <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <div className="reveal-on-hover flex items-center gap-0.5">
                   <Button
                     size="icon-sm"
                     variant="ghost"

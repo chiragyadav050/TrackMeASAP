@@ -233,7 +233,7 @@ export function TaskRow({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="mt-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100"
+              className="reveal-on-hover mt-0.5 shrink-0 data-[popup-open]:opacity-100"
               aria-label={`Actions for ${task.title}`}
             >
               <MoreHorizontal className="size-3.5" />

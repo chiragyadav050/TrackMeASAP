@@ -51,6 +51,18 @@ export type ToolDefinition<TSchema extends z.ZodType = z.ZodType> = {
   readonly schema: TSchema;
   readonly risk: ToolRisk;
   /**
+   * Escalates a single call to DESTRUCTIVE based on its ARGUMENTS.
+   *
+   * Risk is otherwise a property of the tool, which is too coarse for the
+   * tools that carry one dangerous value among safe ones: `project.setStatus`
+   * accepts "CANCELLED" alongside "ACTIVE", and `goal.setStatus` accepts
+   * "ABANDONED". Marking the whole tool destructive would force a
+   * confirmation on every ordinary status change; leaving it SAFE let the
+   * model cancel a live project outright because it read "I'm done with
+   * Alpha" as an instruction.
+   */
+  readonly escalates?: (args: z.infer<TSchema>) => boolean;
+  /**
    * One line a human can read before confirming. Written by US, from the
    * VALIDATED arguments — never by the model.
    */
@@ -161,7 +173,10 @@ export async function executeTool(
   const summary = tool.summarise(parsed.data);
 
   // Rule 3. The handler does not run.
-  if (tool.risk === "DESTRUCTIVE" && !options.allowDestructive) {
+  const isDestructive =
+    tool.risk === "DESTRUCTIVE" || tool.escalates?.(parsed.data) === true;
+
+  if (isDestructive && !options.allowDestructive) {
     return {
       status: "NEEDS_CONFIRMATION",
       summary,

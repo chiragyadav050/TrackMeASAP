@@ -16,7 +16,6 @@ import Link from "next/link";
 import { EmptyState } from "@/components/common/empty-state";
 import { SectionCard } from "@/components/common/section-card";
 import { Button } from "@/components/ui/button";
-import { phaseLabel } from "@/config/phases";
 import { cn } from "@/lib/utils";
 import {
   AttendanceFigure,
@@ -113,9 +112,14 @@ export function OverviewGrid({
 
       <SectionCard title="Progress" icon={CheckCircle2} description="Today.">
         <div className="space-y-3 px-4 py-4">
-          {statistics.dueTodayTotal === 0 && statistics.completedToday === 0 ? (
+          {statistics.todayCompletionPercent === null ? (
+            /* Same honesty as Today: a day that asked for nothing has no
+               percentage, and completing something unscheduled is not a
+               perfect score. */
             <p className="text-meta text-muted-foreground">
-              Nothing was scheduled for today.
+              {statistics.completedToday > 0
+                ? `Nothing was due today. You completed ${statistics.completedToday} anyway.`
+                : "Nothing was scheduled for today."}
             </p>
           ) : (
             <>
@@ -519,19 +523,25 @@ export function OverviewGrid({
         )}
       </SectionCard>
 
+      {/*
+        This card used to assert "No model is connected and nothing on this
+        page is generated", with a Phase 8 badge and a button labelled
+        "Phase 8 — Gemini AI Agent". All of it was written before the assistant
+        shipped and none of it was ever re-checked: the model IS connected, /ai
+        is live, and the card was telling users a feature did not exist while
+        it sat one click away. A hardcoded claim about system state is a lie
+        waiting for the state to change.
+      */}
       <SectionCard
         title="AI assistant"
         icon={Sparkles}
-        badge="Phase 8"
         description="Context-aware help across everything above."
         className="lg:col-span-3"
-        footer="No model is connected and nothing on this page is generated."
       >
         <div className="flex flex-col items-start gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-xl text-pretty text-muted-foreground">
-            Your AI Life Assistant will be connected in Phase 8. It will read
-            your real tasks, coursework and calendar — and act on them with your
-            confirmation.
+            Ask it anything about your real tasks, coursework and calendar — it
+            reads them, and acts only with your confirmation.
           </p>
 
           <Button
@@ -540,7 +550,7 @@ export function OverviewGrid({
             className="shrink-0"
             render={
               <Link href="/ai">
-                {phaseLabel(8)}
+                Open the assistant
                 <ArrowRight data-icon="inline-end" className="size-3.5" />
               </Link>
             }

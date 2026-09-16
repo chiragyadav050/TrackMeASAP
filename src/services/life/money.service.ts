@@ -454,25 +454,52 @@ export async function saveDailyCheckIn(
 ): Promise<DailyCheckIn> {
   const checkInDate = toDateOnly(input.checkInDate);
 
-  const fields = {
-    mood: input.mood ?? null,
-    energy: input.energy ?? null,
-    stress: input.stress ?? null,
-    sleepMinutes: input.sleepMinutes ?? null,
-    sleptAtMinute: input.sleptAtMinute ?? null,
-    wokeAtMinute: input.wokeAtMinute ?? null,
-    waterGlasses: input.waterGlasses ?? null,
-    exerciseMinutes: input.exerciseMinutes ?? null,
-    steps: input.steps ?? null,
-    gratitude: input.gratitude ?? null,
-    highlight: input.highlight ?? null,
-    notes: input.notes ?? null,
-  };
+  const EDITABLE = [
+    "mood",
+    "energy",
+    "stress",
+    "sleepMinutes",
+    "sleptAtMinute",
+    "wokeAtMinute",
+    "waterGlasses",
+    "exerciseMinutes",
+    "steps",
+    "gratitude",
+    "highlight",
+    "notes",
+  ] as const;
+
+  /**
+   * AN UPDATE TOUCHES ONLY WHAT THE CALLER ACTUALLY SENT.
+   *
+   * This used to build a complete record where every absent field became
+   * `null`, and pass that as the upsert's `update`. Any partial save therefore
+   * WIPED the fields it did not mention — and the AI tool exposes only five of
+   * these twelve, so "log that I slept seven hours" silently erased the
+   * gratitude note and highlight written that morning. Destructive behaviour
+   * from a call that reads as additive.
+   *
+   * `undefined` means "not provided" and is skipped; an explicit `null` still
+   * clears, so the distinction the caller cares about survives.
+   */
+  const update: Record<string, unknown> = {};
+
+  for (const key of EDITABLE) {
+    if (input[key] !== undefined) {
+      update[key] = input[key];
+    }
+  }
+
+  // A new row is a different question: absent means "nothing recorded", and
+  // the column is nullable precisely to say so.
+  const create = Object.fromEntries(
+    EDITABLE.map((key) => [key, input[key] ?? null]),
+  );
 
   return db.dailyCheckIn.upsert({
     where: { profileId_checkInDate: { profileId, checkInDate } },
-    create: { profileId, checkInDate, ...fields },
-    update: fields,
+    create: { profileId, checkInDate, ...create },
+    update,
   });
 }
 

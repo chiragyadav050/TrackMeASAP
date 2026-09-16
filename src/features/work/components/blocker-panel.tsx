@@ -141,7 +141,7 @@ export function BlockerPanel({
                   variant="ghost"
                   aria-label="Delete this blocker"
                   disabled={isPending}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  className="reveal-on-hover"
                   onClick={() => {
                     const confirmed = window.confirm(
                       "Delete this blocker? Resolving it keeps the record of what happened.",

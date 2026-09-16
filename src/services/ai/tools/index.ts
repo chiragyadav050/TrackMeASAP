@@ -927,7 +927,11 @@ export function registerAllTools(): void {
       status: z.enum(["ACTIVE", "ACHIEVED", "PAUSED", "ABANDONED"]),
     }),
     risk: "MODERATE",
-    summarise: (args) => `Mark a goal as ${args.status.toLowerCase()}`,
+    summarise: (args) =>
+      args.status === "ABANDONED"
+        ? "ABANDON this goal — it stops being something you are working towards"
+        : `Mark a goal as ${args.status.toLowerCase()}`,
+    escalates: (args) => args.status === "ABANDONED",
     handler: async (args, { profile }) => {
       const goal = await setGoalStatus(profile.id, args.goalId, args.status);
       return { id: goal.id, status: goal.status };
@@ -1057,7 +1061,13 @@ export function registerAllTools(): void {
       ]),
     }),
     risk: "MODERATE",
-    summarise: (args) => `Mark a project as ${args.status.toLowerCase()}`,
+    summarise: (args) =>
+      args.status === "CANCELLED"
+        ? "CANCEL this project — it stops being active work"
+        : `Mark a project as ${args.status.toLowerCase()}`,
+    // Cancelling is not a status tweak; the rules name cancellation
+    // explicitly as something the model must never decide alone.
+    escalates: (args) => args.status === "CANCELLED",
     handler: async (args, { profile }) => {
       const project = await setProjectStatus(
         profile.id,

@@ -165,7 +165,7 @@ export function NotificationBell({
                     variant="ghost"
                     aria-label={`Dismiss "${notification.title}"`}
                     disabled={isPending}
-                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="reveal-on-hover shrink-0"
                     onClick={() =>
                       run(
                         () =>

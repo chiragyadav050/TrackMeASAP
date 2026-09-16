@@ -231,7 +231,7 @@ export function AttendanceBoard({
           <EmptyState
             icon={CalendarPlus}
             title="No classes yet"
-            description="Build a timetable and generate class occurrences to start marking attendance."
+            description="Attendance is marked against real class occurrences, which are generated from a weekly timetable. There is no timetable editor yet — this is the next thing being built."
             action={
               <Button
                 size="sm"
@@ -246,14 +246,39 @@ export function AttendanceBoard({
                     .toISOString()
                     .slice(0, 10);
 
-                  run(
-                    () =>
-                      generateSessionsCommand({
-                        fromDate: from,
-                        toDate: to,
-                      }),
-                    "Classes generated from your timetable.",
-                  );
+                  // REPORTS THE REAL COUNT. This said "Classes generated
+                  // from your timetable" unconditionally — and since no
+                  // timetable can be created anywhere in the app, the honest
+                  // answer was always zero. A success toast for a no-op is
+                  // the same false confirmation the assistant is forbidden
+                  // from giving.
+                  startTransition(async () => {
+                    const result = await generateSessionsCommand({
+                      fromDate: from,
+                      toDate: to,
+                    });
+
+                    if (result.status === "error") {
+                      toast.error(
+                        result.message ?? "Couldn't generate classes.",
+                      );
+                      return;
+                    }
+
+                    const created =
+                      result.status === "success" ? result.data.created : 0;
+
+                    if (created === 0) {
+                      toast.message(
+                        "Nothing to generate — you have no weekly timetable yet.",
+                      );
+                      return;
+                    }
+
+                    toast.success(
+                      `Generated ${created} ${created === 1 ? "class" : "classes"}.`,
+                    );
+                  });
                 }}
               >
                 Generate from timetable
@@ -312,8 +337,14 @@ function AttendanceCalculator() {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<AttendanceSummary | null>(null);
 
-  const [present, setPresent] = useState("41");
-  const [absent, setAbsent] = useState("9");
+  // EMPTY, not seeded. These were pre-filled with "41" and "9" — 82%
+  // attendance belonging to nobody. One tap produced a fully worded verdict
+  // ("you can miss 4 more classes") from invented figures, which a user has
+  // every reason to read as their own record. The one piece of fake data in
+  // the product, on the screen where a wrong number changes whether someone
+  // skips a class.
+  const [present, setPresent] = useState("");
+  const [absent, setAbsent] = useState("");
   const [threshold, setThreshold] = useState("75");
 
   const calculate = () => {

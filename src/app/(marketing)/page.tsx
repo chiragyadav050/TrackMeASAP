@@ -87,7 +87,7 @@ export default function LandingPage() {
               id="surfaces-heading"
               className="text-label-caps text-muted-foreground"
             >
-              What Life OS will hold
+              What Life OS holds
             </h2>
 
             <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
@@ -101,10 +101,18 @@ export default function LandingPage() {
               ))}
             </dl>
 
+            {/*
+              This read "Phase {phase.id} ships the foundation: accounts, the
+              application shell, theming and the command palette" — Phase 1's
+              sentence wearing whatever number the config currently held. At
+              Phase 10 it told every visitor to the PUBLIC landing page that
+              the product was an empty shell. The second sentence, "everything
+              else is on the roadmap and honestly marked as not built yet", had
+              been false for nine phases.
+            */}
             <p className="mt-8 text-meta text-muted-foreground">
-              Phase {phase.id} ships the foundation: accounts, the application
-              shell, theming and the command palette. Everything else is on the
-              roadmap and honestly marked as not built yet.
+              Every figure in Life OS comes from something you recorded. Where
+              there is no data it says so, rather than showing a zero.
             </p>
           </section>
         </div>

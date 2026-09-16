@@ -465,9 +465,17 @@ export async function getTaskStatistics(
 export function computeCompletionPercent(
   completed: number,
   total: number,
-): number {
+): number | null {
+  // NULL, NOT 100, WHEN NOTHING WAS DUE.
+  //
+  // This returned 100 whenever `total` was 0 and anything had been completed,
+  // which rendered a full green bar and the literal string "3 of 0 complete".
+  // There is no denominator to be 100% of: the honest answer is that today
+  // asked for nothing, and the UI can say that instead of awarding a perfect
+  // score for it. Returning `null` forces every caller to decide, which is
+  // the same convention the attendance and preparation figures already use.
   if (total <= 0) {
-    return completed > 0 ? 100 : 0;
+    return null;
   }
 
   return Math.min(100, Math.round((completed / total) * 100));

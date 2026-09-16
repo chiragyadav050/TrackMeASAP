@@ -183,7 +183,7 @@ export function FinanceBoard({
                     variant="ghost"
                     aria-label={`Delete ${entry.description}`}
                     disabled={isPending}
-                    className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="reveal-on-hover"
                     onClick={() =>
                       run(
                         () => deleteMoneyEntryCommand({ entryId: entry.id }),

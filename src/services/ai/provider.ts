@@ -91,7 +91,7 @@ export interface AiProvider {
 export class AiProviderNotConfiguredError extends Error {
   constructor() {
     super(
-      "No AI provider is configured. The Gemini provider arrives in Phase 8.",
+      "No AI provider is configured. Set GEMINI_API_KEY to enable the assistant.",
     );
     this.name = "AiProviderNotConfiguredError";
   }

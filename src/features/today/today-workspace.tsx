@@ -195,16 +195,23 @@ function ProgressCard({
 }: {
   completed: number;
   total: number;
-  percent: number;
+  percent: number | null;
   overdueCount: number;
   activeCount: number;
 }) {
   return (
     <SectionCard title="Progress" icon={CheckCircle2}>
       <div className="space-y-3 px-4 py-4">
-        {total === 0 && completed === 0 ? (
+        {percent === null ? (
+          /*
+            Covers BOTH empty cases, including the one that used to award 100%.
+            Completing something that was never due is worth saying out loud —
+            it is just not a score, because nothing set the target.
+          */
           <p className="text-meta text-muted-foreground">
-            Nothing was scheduled for today.
+            {completed > 0
+              ? `Nothing was due today. You completed ${completed} anyway.`
+              : "Nothing was scheduled for today."}
           </p>
         ) : (
           <>

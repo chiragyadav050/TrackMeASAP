@@ -105,7 +105,8 @@ export type TaskStatisticsDto = {
   readonly completedToday: number;
   readonly overdueCount: number;
   /** 0–100, of today's tasks. `0` when nothing is due today. */
-  readonly todayCompletionPercent: number;
+  /** `null` when nothing was due — there is no denominator to be a share of. */
+  readonly todayCompletionPercent: number | null;
 };
 
 /** Everything the Today page renders, assembled in one server round-trip. */

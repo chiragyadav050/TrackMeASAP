@@ -353,6 +353,41 @@
     @apply text-label font-medium uppercase;
   }
 
+  /**
+   * An action that only appears on hover, EXCEPT on touch.
+   *
+   * Nine surfaces hid their row actions — including delete — behind
+   * `opacity-0 group-hover:opacity-100`. A phone has no hover, so those
+   * controls rendered fully transparent while remaining tappable: invisible,
+   * undiscoverable, and hit by accident. Milestone reorder and delete were
+   * unreachable on mobile altogether.
+   *
+   * Hover is an enhancement for pointers that have it. Where there is no
+   * hover, the control is simply visible.
+   */
+  .reveal-on-hover {
+    opacity: 0;
+    transition: opacity 150ms var(--ease-out-quart);
+  }
+
+  .group:hover .reveal-on-hover,
+  .group:focus-within .reveal-on-hover,
+  .reveal-on-hover:focus-visible {
+    opacity: 1;
+  }
+
+  @media (pointer: coarse) {
+    .reveal-on-hover {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal-on-hover {
+      transition: none;
+    }
+  }
+
   /* The editorial display face. Applied by name rather than by element so it
      can never leak into dense UI, where a single-weight serif would destroy
      the hierarchy it exists to create. */
@@ -406,6 +441,32 @@
     .lift:hover {
       transform: none;
     }
+  }
+}
+
+/**
+ * TOUCH TARGETS, on touch devices only.
+ *
+ * Every icon button in this app is 24–28px. Apple asks for 44pt and Material
+ * for 48dp, and the mobile header stacks five 28px buttons at a 6px gap — the
+ * hamburger, which is the ONLY navigation on a phone, sits next to the theme
+ * toggle. People reach for the menu and change the theme instead.
+ *
+ * Scoped to `pointer: coarse` so a mouse keeps the dense instrument layout
+ * this design depends on. Applied as a minimum rather than a fixed size, so
+ * nothing already large enough is changed.
+ */
+@media (pointer: coarse) {
+  [data-slot="button"],
+  [data-slot="dropdown-menu-trigger"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Spacing has to grow with the targets, or enlarging them just makes the
+     mis-tap land on a different button. */
+  header [data-slot="button"] + [data-slot="button"] {
+    margin-inline-start: 0.25rem;
   }
 }
 

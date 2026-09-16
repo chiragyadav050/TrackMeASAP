@@ -160,7 +160,7 @@ export function SubtaskList({
               variant="ghost"
               size="icon-xs"
               aria-label={`Remove ${subtask.title}`}
-              className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+              className="reveal-on-hover"
               onClick={() =>
                 run(() => deleteSubtaskCommand({ subtaskId: subtask.id }))
               }

@@ -201,7 +201,7 @@ export function ExamDetail({ exam, topics }: ExamDetailProps) {
                   variant="ghost"
                   size="icon-xs"
                   aria-label={`Remove ${topic.title}`}
-                  className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  className="reveal-on-hover shrink-0"
                   onClick={() =>
                     run(() => deleteExamTopicCommand({ topicId: topic.id }))
                   }

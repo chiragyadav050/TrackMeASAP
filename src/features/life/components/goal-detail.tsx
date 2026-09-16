@@ -271,7 +271,7 @@ export function GoalDetail({ detail }: { detail: GoalDetailDto }) {
                     variant="ghost"
                     aria-label={`Delete "${milestone.title}"`}
                     disabled={isPending}
-                    className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="reveal-on-hover"
                     onClick={() =>
                       run(
                         () =>

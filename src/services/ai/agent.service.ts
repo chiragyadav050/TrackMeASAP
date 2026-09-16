@@ -282,154 +282,192 @@ export async function runAgentTurn(
   let totalOutput = 0;
   let reply = "";
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const completion = await provider.complete({
-      messages,
-      tools: toProviderTools(),
-    });
+  // BILLED WORK IS RECORDED EVEN WHEN THE TURN FAILS.
+  //
+  // `recordUsage` used to be the last statement of the happy path, so a
+  // provider timeout, a 5xx or a malformed-schema 400 threw straight past it:
+  // Google had already been called and charged, and the counter moved by
+  // nothing. A user could then retry immediately and indefinitely, which made
+  // the daily cap a cap on SUCCESSFUL turns only — the opposite of a cost
+  // control, because failing turns are exactly the ones that get retried.
+  //
+  // The `finally` below is what makes the limit mean what it claims.
+  let recorded = false;
 
-    totalInput += completion.usage?.inputTokens ?? 0;
-    totalOutput += completion.usage?.outputTokens ?? 0;
-
-    if (completion.toolCalls.length === 0) {
-      reply = completion.text;
-      break;
+  const flushUsage = async (): Promise<void> => {
+    if (recorded) {
+      return;
     }
 
-    messages.push({
-      role: "assistant",
-      content: completion.text || "(calling tools)",
+    recorded = true;
+
+    await recordUsage(profile.id, profile.timeZone, now, {
+      inputTokens: totalInput,
+      outputTokens: totalOutput,
+    }).catch((error: unknown) => {
+      // Never let accounting mask the original failure.
+      log.error("Failed to record AI usage", {
+        profileId: profile.id,
+        error: error instanceof Error ? error.message : "unknown",
+      });
     });
+  };
 
-    for (const call of completion.toolCalls) {
-      const outcome = await executeTool(call.name, call.arguments, toolContext);
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+      const completion = await provider.complete({
+        messages,
+        tools: toProviderTools(),
+      });
 
-      if (outcome.status === "NEEDS_CONFIRMATION") {
-        // 3. Written as PENDING and NOT executed.
-        const action = await db.aIAction.create({
-          data: {
-            profileId: profile.id,
-            conversationId: conversation.id,
-            toolName: outcome.toolName,
-            // Cast for Prisma's Json input type. The value is already
-            // schema-validated by the tool registry, so this is a typing
-            // formality rather than a trust decision.
-            arguments: outcome.arguments as Prisma.InputJsonValue,
-            risk: "DESTRUCTIVE",
-            status: "PENDING",
-            summary: outcome.summary,
-            expiresAt: new Date(
-              now.getTime() + CONFIRMATION_TTL_MINUTES * 60_000,
-            ),
-          },
-        });
+      totalInput += completion.usage?.inputTokens ?? 0;
+      totalOutput += completion.usage?.outputTokens ?? 0;
 
-        pendingConfirmations.push({ id: action.id, summary: outcome.summary });
-
-        messages.push({
-          role: "tool",
-          toolCallId: call.name,
-          content:
-            "This action needs the user's explicit confirmation and has NOT been performed. Tell the user what you are proposing and wait.",
-        });
-
-        continue;
+      if (completion.toolCalls.length === 0) {
+        reply = completion.text;
+        break;
       }
 
-      if (outcome.status === "ERROR") {
-        await db.aIAction.create({
+      messages.push({
+        role: "assistant",
+        content: completion.text || "(calling tools)",
+      });
+
+      for (const call of completion.toolCalls) {
+        const outcome = await executeTool(
+          call.name,
+          call.arguments,
+          toolContext,
+        );
+
+        if (outcome.status === "NEEDS_CONFIRMATION") {
+          // 3. Written as PENDING and NOT executed.
+          const action = await db.aIAction.create({
+            data: {
+              profileId: profile.id,
+              conversationId: conversation.id,
+              toolName: outcome.toolName,
+              // Cast for Prisma's Json input type. The value is already
+              // schema-validated by the tool registry, so this is a typing
+              // formality rather than a trust decision.
+              arguments: outcome.arguments as Prisma.InputJsonValue,
+              risk: "DESTRUCTIVE",
+              status: "PENDING",
+              summary: outcome.summary,
+              expiresAt: new Date(
+                now.getTime() + CONFIRMATION_TTL_MINUTES * 60_000,
+              ),
+            },
+          });
+
+          pendingConfirmations.push({
+            id: action.id,
+            summary: outcome.summary,
+          });
+
+          messages.push({
+            role: "tool",
+            toolCallId: call.name,
+            content:
+              "This action needs the user's explicit confirmation and has NOT been performed. Tell the user what you are proposing and wait.",
+          });
+
+          continue;
+        }
+
+        if (outcome.status === "ERROR") {
+          await db.aIAction.create({
+            data: {
+              profileId: profile.id,
+              conversationId: conversation.id,
+              toolName: call.name,
+              arguments: (call.arguments ?? {}) as Prisma.InputJsonValue,
+              status: "FAILED",
+              summary: `Failed: ${call.name}`,
+              error: outcome.message.slice(0, 500),
+            },
+          });
+
+          messages.push({
+            role: "tool",
+            toolCallId: call.name,
+            content: `Error: ${outcome.message}`,
+          });
+
+          continue;
+        }
+
+        const action = await db.aIAction.create({
           data: {
             profileId: profile.id,
             conversationId: conversation.id,
             toolName: call.name,
             arguments: (call.arguments ?? {}) as Prisma.InputJsonValue,
-            status: "FAILED",
-            summary: `Failed: ${call.name}`,
-            error: outcome.message.slice(0, 500),
+            status: "EXECUTED",
+            summary: outcome.summary,
+            executedAt: now,
+            result: JSON.stringify(outcome.result).slice(0, 2000),
           },
+        });
+
+        executedActions.push({
+          id: action.id,
+          toolName: call.name,
+          summary: outcome.summary,
+          status: "EXECUTED",
         });
 
         messages.push({
           role: "tool",
           toolCallId: call.name,
-          content: `Error: ${outcome.message}`,
+          content: JSON.stringify(outcome.result).slice(0, 8000),
         });
-
-        continue;
       }
-
-      const action = await db.aIAction.create({
-        data: {
-          profileId: profile.id,
-          conversationId: conversation.id,
-          toolName: call.name,
-          arguments: (call.arguments ?? {}) as Prisma.InputJsonValue,
-          status: "EXECUTED",
-          summary: outcome.summary,
-          executedAt: now,
-          result: JSON.stringify(outcome.result).slice(0, 2000),
-        },
-      });
-
-      executedActions.push({
-        id: action.id,
-        toolName: call.name,
-        summary: outcome.summary,
-        status: "EXECUTED",
-      });
-
-      messages.push({
-        role: "tool",
-        toolCallId: call.name,
-        content: JSON.stringify(outcome.result).slice(0, 8000),
-      });
     }
-  }
 
-  if (reply.length === 0) {
-    // The loop hit its ceiling without a final answer. Saying so is better
-    // than presenting a half-finished chain as a complete one.
-    reply =
-      pendingConfirmations.length > 0
-        ? "I've prepared that action — confirm it below and I'll go ahead."
-        : "I wasn't able to finish that. Try asking for one thing at a time.";
-  }
+    if (reply.length === 0) {
+      // The loop hit its ceiling without a final answer. Saying so is better
+      // than presenting a half-finished chain as a complete one.
+      reply =
+        pendingConfirmations.length > 0
+          ? "I've prepared that action — confirm it below and I'll go ahead."
+          : "I wasn't able to finish that. Try asking for one thing at a time.";
+    }
 
-  await db.aIMessage.create({
-    data: {
+    await db.aIMessage.create({
+      data: {
+        profileId: profile.id,
+        conversationId: conversation.id,
+        role: "ASSISTANT",
+        content: reply,
+        inputTokens: totalInput,
+        outputTokens: totalOutput,
+        model: provider.id,
+      },
+    });
+
+    await db.aIConversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: now },
+    });
+
+    log.info("AI turn complete", {
       profileId: profile.id,
+      rounds: executedActions.length,
+      pending: pendingConfirmations.length,
+    });
+
+    return {
       conversationId: conversation.id,
-      role: "ASSISTANT",
-      content: reply,
-      inputTokens: totalInput,
-      outputTokens: totalOutput,
-      model: provider.id,
-    },
-  });
-
-  await recordUsage(profile.id, profile.timeZone, now, {
-    inputTokens: totalInput,
-    outputTokens: totalOutput,
-  });
-
-  await db.aIConversation.update({
-    where: { id: conversation.id },
-    data: { updatedAt: now },
-  });
-
-  log.info("AI turn complete", {
-    profileId: profile.id,
-    rounds: executedActions.length,
-    pending: pendingConfirmations.length,
-  });
-
-  return {
-    conversationId: conversation.id,
-    reply,
-    actions: executedActions,
-    pendingConfirmations,
-    usage: { inputTokens: totalInput, outputTokens: totalOutput },
-  };
+      reply,
+      actions: executedActions,
+      pendingConfirmations,
+      usage: { inputTokens: totalInput, outputTokens: totalOutput },
+    };
+  } finally {
+    // Runs on the success path AND on every throw above, which is the point.
+    await flushUsage();
+  }
 }
 
 /**

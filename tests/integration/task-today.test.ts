@@ -298,7 +298,10 @@ describe("getTaskStatistics", () => {
       dueTodayTotal: 0,
       completedToday: 0,
       overdueCount: 0,
-      todayCompletionPercent: 0,
+      // `null`, not 0. Nothing was due, so there is no denominator and no
+      // share to report — and "0%" reads as a failed day rather than an
+      // empty one.
+      todayCompletionPercent: null,
     });
   });
 
@@ -334,9 +337,19 @@ describe("computeCompletionPercent", () => {
     expect(computeCompletionPercent(5, 2)).toBe(100);
   });
 
-  test("handles an empty day in both directions", () => {
-    expect(computeCompletionPercent(0, 0)).toBe(0);
-    expect(computeCompletionPercent(3, 0)).toBe(100);
+  test("a day that demanded nothing has no percentage", () => {
+    // Both of these used to return a number: 0 for an empty day, and — worse
+    // — 100 when tasks were completed that were never due, which rendered a
+    // full green bar and the literal string "3 of 0 complete". A score needs
+    // a denominator; when there is none the honest answer is "no answer".
+    expect(computeCompletionPercent(0, 0)).toBeNull();
+    expect(computeCompletionPercent(3, 0)).toBeNull();
+  });
+
+  test("still reports a real share when something was due", () => {
+    expect(computeCompletionPercent(1, 4)).toBe(25);
+    // Completing more than was due is clamped rather than reported as 140%.
+    expect(computeCompletionPercent(7, 5)).toBe(100);
   });
 });
 
