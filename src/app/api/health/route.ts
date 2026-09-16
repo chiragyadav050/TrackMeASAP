@@ -1,6 +1,5 @@
 import { db } from "@/server/db";
 import { apiSuccess, withApiErrorHandling } from "@/server/api";
-import { getQueueHealth } from "@/server/queue";
 
 /**
  * Liveness + database readiness probe.
@@ -36,7 +35,20 @@ export const GET = withApiErrorHandling("api.health", async () => {
   // Redis is OPTIONAL. An unreachable queue is reported, not thrown — the
   // application is fully usable without a worker, and a health check that
   // fails on an optional dependency would take a working app out of rotation.
-  const queue = await getQueueHealth();
+  //
+  // IMPORTED LAZILY, AND ONLY WHEN REDIS IS ACTUALLY CONFIGURED. `@/server/queue`
+  // pulls in BullMQ and ioredis at module scope. A static import therefore
+  // dragged both into this serverless function's cold start, where — with no
+  // Redis to talk to — the request never completed at all: `/api/health` hung
+  // until the platform timed it out, while every other route was fine.
+  //
+  // Reading the variable here rather than calling `isQueueConfigured()` is the
+  // whole point: asking the queue module whether a queue exists would import
+  // the very thing being avoided. This is the same separation that keeps
+  // `src/server/jobs.ts` free of BullMQ so the cron route can use it.
+  const queue = process.env.REDIS_URL?.trim()
+    ? await import("@/server/queue").then((module) => module.getQueueHealth())
+    : { configured: false, reachable: false };
 
   return apiSuccess<HealthPayload>(
     {
