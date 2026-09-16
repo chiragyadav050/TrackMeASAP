@@ -94,16 +94,25 @@ test.describe("task lifecycle", () => {
     await input.press("Enter");
     await expect(page.getByText(title)).toBeVisible();
 
-    const complete = page.getByRole("checkbox", {
-      name: `Complete ${title}`,
-    });
-    await complete.click();
+    await page.getByRole("checkbox", { name: `Complete ${title}` }).click();
 
-    // The row flips optimistically, then the label inverts once persisted.
+    // The list defaults to Active, so a completed task LEAVES it. That is the
+    // product behaviour, not a glitch — reopening therefore has to happen from
+    // a view that still shows the task.
+    await expect(page.getByText(title)).toBeHidden();
+
+    await page.getByLabel("Filter by status").selectOption("COMPLETED");
+
+    // The label inverts once the change is persisted.
     const reopen = page.getByRole("checkbox", { name: `Reopen ${title}` });
     await expect(reopen).toBeVisible();
 
     await reopen.click();
+
+    // Reopened, so it drops out of Completed and returns to Active.
+    await expect(page.getByText(title)).toBeHidden();
+
+    await page.getByLabel("Filter by status").selectOption("ACTIVE");
     await expect(
       page.getByRole("checkbox", { name: `Complete ${title}` }),
     ).toBeVisible();
@@ -151,9 +160,14 @@ test.describe("task lifecycle", () => {
 
     await expect(dialog.getByText("0 / 3 completed")).toBeVisible();
 
-    await dialog
-      .getByRole("checkbox", { name: /Complete Read requirements/i })
-      .click();
+    // A subtask checkbox is named by its visible label, and its state is
+    // carried by aria-checked rather than baked into the name — so the name
+    // stays "Read requirements" whether or not it is ticked.
+    const step = dialog.getByRole("checkbox", { name: "Read requirements" });
+
+    await expect(step).not.toBeChecked();
+    await step.click();
+    await expect(step).toBeChecked();
 
     await expect(dialog.getByText("1 / 3 completed")).toBeVisible();
   });
@@ -316,8 +330,10 @@ test.describe("dashboard", () => {
     await page.goto("/overview");
 
     await expect(page.getByText(title).first()).toBeVisible();
+    // Overview carries more than one heading containing "progress" (academic
+    // progress among them), so this has to say which.
     await expect(
-      page.getByRole("heading", { name: /progress/i }),
+      page.getByRole("heading", { name: /progress/i }).first(),
     ).toBeVisible();
   });
 });
@@ -338,7 +354,10 @@ test.describe("command palette", () => {
     const palette = page.getByRole("dialog");
     await expect(palette).toBeVisible();
 
-    await palette.getByRole("combobox").fill(unique);
+    // By placeholder: the palette renders a search box, not a listbox-backed
+    // combobox, so the role lookup depends on cmdk internals rather than on
+    // anything the user can see.
+    await palette.getByPlaceholder(/search tasks/i).fill(unique);
     await expect(palette.getByText(title)).toBeVisible();
   });
 

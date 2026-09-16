@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { formBoolean } from "@/lib/form-schema";
 import { MINUTES_PER_DAY } from "@/lib/time";
 import { localDateSchema, localTimeSchema } from "@/services/task/task.schema";
 
@@ -357,8 +358,15 @@ const requireDateForTime = (
 
 export const createAssignmentSchema = assignmentFields
   .extend({
-    /** Creates a linked Task in the main task system at the same time. */
-    createTask: z.boolean().default(false),
+    /**
+     * Creates a linked Task in the main task system at the same time.
+     *
+     * `formBoolean` because this arrives from a CHECKBOX: an HTML checkbox
+     * posts the string "true" when ticked and is simply ABSENT when not, so a
+     * bare `z.boolean()` rejects the ticked case. The box is ticked by
+     * default, so that made the DEFAULT path of creating an assignment fail.
+     */
+    createTask: formBoolean(),
   })
   .superRefine(requireDateForTime);
 

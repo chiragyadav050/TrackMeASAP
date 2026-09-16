@@ -14,18 +14,18 @@ Set all ten in the Vercel dashboard, for **Production, Preview and
 Development**. The app validates them at boot and refuses to start if one is
 missing, so a typo fails loudly rather than at 3am.
 
-| Variable | Notes |
-|---|---|
-| `DATABASE_URL` | Supabase **transaction pooler** (port 6543), with `?pgbouncer=true&connection_limit=1`. Serverless opens many short connections; the direct port runs out. |
-| `DIRECT_URL` | Supabase **direct** connection (port 5432). Migrations only — they need features the pooler does not offer. |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public by design. |
-| `CLERK_SECRET_KEY` | Secret. |
-| `NEXT_PUBLIC_APP_URL` | The real deployed URL. Used to build absolute links in notifications, so a wrong value produces broken links rather than an error. |
-| `LOG_LEVEL` | `info` in production. |
-| `TELEGRAM_BOT_TOKEN` | Secret. Omit to disable the bot cleanly. |
-| `TELEGRAM_WEBHOOK_SECRET` | Any long random string. Telegram echoes it back and the webhook rejects anything else. |
-| `GEMINI_API_KEY` | Secret. Omit to disable the AI assistant cleanly. |
-| `CRON_SECRET` | Vercel sends it to `/api/cron`. **Without it the route refuses every request and no reminder ever fires.** |
+| Variable                            | Notes                                                                                                                                                      |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                      | Supabase **transaction pooler** (port 6543), with `?pgbouncer=true&connection_limit=1`. Serverless opens many short connections; the direct port runs out. |
+| `DIRECT_URL`                        | Supabase **direct** connection (port 5432). Migrations only — they need features the pooler does not offer.                                                |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Public by design.                                                                                                                                          |
+| `CLERK_SECRET_KEY`                  | Secret.                                                                                                                                                    |
+| `NEXT_PUBLIC_APP_URL`               | The real deployed URL. Used to build absolute links in notifications, so a wrong value produces broken links rather than an error.                         |
+| `LOG_LEVEL`                         | `info` in production.                                                                                                                                      |
+| `TELEGRAM_BOT_TOKEN`                | Secret. Omit to disable the bot cleanly.                                                                                                                   |
+| `TELEGRAM_WEBHOOK_SECRET`           | Any long random string. Telegram echoes it back and the webhook rejects anything else.                                                                     |
+| `GEMINI_API_KEY`                    | Secret. Omit to disable the AI assistant cleanly.                                                                                                          |
+| `CRON_SECRET`                       | Vercel sends it to `/api/cron`. **Without it the route refuses every request and no reminder ever fires.**                                                 |
 
 The password in both database URLs contains `@`, which must be
 percent-encoded as `%40` or the URL parses as the wrong host.
@@ -47,10 +47,10 @@ pnpm exec prisma migrate deploy
 
 `vercel.json` declares both schedules; Vercel picks them up on deploy.
 
-| Path | Schedule | Does |
-|---|---|---|
-| `/api/cron?job=reminders` | every minute | fires due reminders, flushes any held by quiet hours |
-| `/api/cron?job=proactive` | hourly | the proactive scan — acts at most once per local day per person, so hourly just gives every timezone its turn |
+| Path                      | Schedule     | Does                                                                                                          |
+| ------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `/api/cron?job=reminders` | every minute | fires due reminders, flushes any held by quiet hours                                                          |
+| `/api/cron?job=proactive` | hourly       | the proactive scan — acts at most once per local day per person, so hourly just gives every timezone its turn |
 
 Verify after deploying:
 

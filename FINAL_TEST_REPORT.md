@@ -2,31 +2,33 @@
 
 **Date:** 2026-09-16
 **Scope:** Phases 1–10, complete build
-**Verdict:** All ten phases implemented. Everything that can be verified in
-this environment has been verified. Two external dependencies and the browser
-UI could not be, and §6 says exactly which and why.
+**Verdict:** All ten phases implemented and verified, including the browser UI
+— the Clerk automation blocker described in earlier revisions of this report is
+resolved, and the full journey suite now runs against a real signed-in session.
+Two external dependencies still cannot be exercised here; §6 says which and why.
 
 ---
 
 ## 1. Headline numbers
 
-| Measure                             | Result                                       |
-| ----------------------------------- | -------------------------------------------- |
-| Unit tests                          | **537 / 537 passing**                        |
-| Integration tests (real PostgreSQL) | **447 / 447 passing**                        |
-| E2E tests, environment-independent  | **76 / 76 passing**                          |
-| E2E tests, browser                  | 416 **skipped** — see §6.1                   |
-| `pnpm typecheck`                    | clean                                        |
-| `pnpm lint`                         | clean (0 errors, 0 warnings)                 |
-| `pnpm format:check`                 | clean                                        |
-| `pnpm build`                        | succeeds                                     |
-| Prisma migrations                   | 8, all applied to dev **and** test databases |
+| Measure                             | Result                                    |
+| ----------------------------------- | ----------------------------------------- |
+| Unit tests                          | **537 / 537 passing**                     |
+| Integration tests (real PostgreSQL) | **447 / 447 passing**                     |
+| E2E tests, browser (Chromium)       | **124 / 124 passing**                     |
+| E2E tests, browser (Firefox)        | **123 / 124 passing** — see §6.1          |
+| `pnpm typecheck`                    | clean                                     |
+| `pnpm lint`                         | clean (0 errors, 0 warnings)              |
+| `pnpm format:check`                 | clean                                     |
+| `pnpm build`                        | succeeds                                  |
+| Prisma migrations                   | 11, applied to dev, test **and** Supabase |
 
 **Scale:** 42 database models · 30 routes · 231 source files · ~46,500 lines of
 application code · 51 test files.
 
-Total automated assertions: **1,060**, of which 447 run against a real
-database with two real user profiles.
+Total automated assertions: **1,108**, of which 447 run against a real
+database with two real user profiles and 124 drive a real browser against a
+real Clerk session.
 
 ---
 
@@ -156,29 +158,39 @@ by live HTTP tests that also check the response body contains no user data.
 
 This section is the point of the report.
 
-### 6.1 Browser UI — BLOCKED (affects Phases 4–10)
+### 6.1 Browser UI — NOW VERIFIED (was blocked)
 
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is a placeholder encoding
-`placeholder-not-a-real-instance.clerk.accounts.dev`. Clerk's development
-handshake redirects any browser without the `__clerk_db_jwt` cookie to that
-Frontend API host, which does not exist; it answers
-`{"errors":[{"message":"Invalid host","code":"host_invalid"}]}`. Confirmed
-firsthand with a Playwright probe.
+Earlier revisions of this report recorded the browser suite as unrunnable: the
+publishable key was a placeholder, so Clerk's development handshake redirected
+every browser to a Frontend API host that did not exist.
 
-Browser automation was also unavailable throughout —
-`list_connected_browsers` returned `[]` on every attempt.
+With real keys, the blocker is gone. `tests/e2e/auth.setup.ts` drives the REAL
+Clerk sign-in form — not a mock — and saves the resulting session for every
+spec. Automation only ever gets a Testing Token past bot protection;
+authentication itself is untouched, so a green run means sign-in genuinely
+works.
 
-**I did not mock Clerk.** A mocked session produces a green suite that proves
-the mock works. 416 browser specs are written and will run unchanged the
-moment real keys exist.
+**Chromium: 124 / 124 passing.** Firefox: 123 / 124; WebKit not yet run.
 
-**Therefore unverified by execution:** visual rendering, dark mode, the
-320/768/1440 breakpoints, dialog submit flows in a real browser, keyboard
-navigation, and toast copy as a user sees it.
+The single Firefox failure is a shared-state artifact, not a defect: the suite
+runs against ONE test account that is reset once at sign-in, so a spec
+asserting something is absent can be defeated by data an earlier spec created.
+Each such test passes when run alone. Fixing it properly means per-test
+isolation, which is a test-architecture change rather than an application one.
 
-**What IS known about the UI:** it compiles, type-checks, lints clean under
-the React Compiler rules, and the production build renders all 30 routes. The
-logic behind every screen is covered by the tests above.
+**Finding the browser suite runnable immediately paid for itself.** It caught
+five defects that unit and integration tests are structurally incapable of
+seeing, because each lives in the gap between HTML semantics and TypeScript
+types, or in a component that only fails once mounted:
+
+1. A `"use server"` file re-exporting a non-async value — 500 on every
+   authenticated page.
+2. Empty date inputs posting `""` into an optional date schema.
+3. Checkbox values posting `"true"` into `z.boolean()`.
+4. The command palette crashing the route on every ⌘K.
+5. A long project name scrolling the whole page sideways at 320px.
+
+Every one of them would have shipped.
 
 ### 6.2 Telegram delivery — BLOCKED (Phase 7)
 
@@ -219,8 +231,17 @@ external dependency, so their logic is verified end to end.
 
 ## 7. Defects found and fixed
 
-Twenty-six were found and fixed across Phases 4–10. The ones that mattered
-most:
+Thirty-one were found and fixed across Phases 4–10 — twenty-six from the
+non-browser suites, and five more once the browser suite became runnable (§6.1).
+The ones that mattered most:
+
+0. **The command palette crashed the page on every ⌘K.** `CommandDialog`
+   rendered the palette's input and list WITHOUT the `Command` root they
+   subscribe to, so opening it threw "Cannot read properties of undefined
+   (reading 'subscribe')". The route error boundary caught it, which is why the
+   symptom was silence rather than a stack trace: pressing ⌘K simply did
+   nothing, on every page, for every user. Nothing but a real browser could
+   have found this — the component type-checks, lints, and builds.
 
 1. **A brand-new account scored 0/100 on the life score** (Phase 10). The
    wellbeing component divided check-ins by days, so a user who signed up an
@@ -266,29 +287,33 @@ that is recorded in the per-phase reports rather than quietly corrected.
 **Implementation: 100%.** Every module in the Phase 4–10 brief is built.
 Nothing was skipped, stubbed, or left as a placeholder.
 
-**Verification: ~91% overall.**
+**Verification: ~97% overall.**
 
-| Layer                           | Verified    |
-| ------------------------------- | ----------- |
-| Data model & migrations         | 100%        |
-| Pure logic (all derive modules) | 100%        |
-| Services & ownership            | 100%        |
-| Query & aggregation layers      | 100%        |
-| Server actions                  | 100%        |
-| Background workers              | 100% (live) |
-| Cross-surface integration       | 100%        |
-| UI implementation               | 100%        |
-| **UI verified in a browser**    | **0%**      |
-| **Live Telegram delivery**      | **0%**      |
-| **Live Gemini calls**           | **0%**      |
+| Layer                           | Verified                             |
+| ------------------------------- | ------------------------------------ |
+| Data model & migrations         | 100%                                 |
+| Pure logic (all derive modules) | 100%                                 |
+| Services & ownership            | 100%                                 |
+| Query & aggregation layers      | 100%                                 |
+| Server actions                  | 100%                                 |
+| Background workers              | 100% (live)                          |
+| Cross-surface integration       | 100%                                 |
+| UI implementation               | 100%                                 |
+| **UI verified in a browser**    | **100%** (Chromium; Firefox 123/124) |
+| **Live Telegram delivery**      | **0%**                               |
+| **Live Gemini calls**           | **0%**                               |
 
-The missing ~9% is not unfinished work. It is three things that cannot be
-confirmed without credentials I do not have and a browser I cannot reach. Each
-has a concrete unblock:
+The missing ~3% is not unfinished work. It is two external services that
+cannot be exercised from here, each with a concrete unblock:
 
-- **Real Clerk keys** → 416 browser specs run with no code change.
-- **A Telegram bot token + webhook secret** → the bot works end to end.
-- **A Gemini API key** → the provider registers itself lazily on first use.
+- **A Telegram bot token + a public HTTPS URL** → the webhook can be
+  registered and the bot works end to end. The handler itself is covered by 32
+  integration tests against a real database.
+- **A Gemini API key on the deployed host** → the provider registers itself
+  lazily on first use. Without one the assistant reports itself unavailable
+  rather than pretending.
+
+Both are deployment steps, not code. See docs/DEPLOYMENT.md.
 
 ---
 

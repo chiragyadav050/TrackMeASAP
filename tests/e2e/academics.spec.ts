@@ -39,9 +39,18 @@ async function ensureSemesterAndSubject(
 
   // A brand-new semester is not current until asked; several surfaces depend
   // on there being one.
-  const setCurrent = page.getByRole("button", { name: /set current/i }).first();
+  //
+  // Targeted by NAME rather than `.first()`. Every row renders the same
+  // "Set current" text, so `.first()` silently made some OTHER semester
+  // current once this account had more than one — and the subject created
+  // below then landed on a semester the page does not show.
+  const setCurrent = page.getByRole("button", {
+    name: `Set Semester ${label} as current`,
+  });
+
   if (await setCurrent.isVisible().catch(() => false)) {
     await setCurrent.click();
+    await expect(setCurrent).toBeHidden();
   }
 
   await page.goto("/academics/subjects");
@@ -78,10 +87,16 @@ test.describe("semester", () => {
     await expect(page.getByText(`Semester ${label}`)).toBeVisible();
 
     await page
-      .getByRole("button", { name: /set current/i })
-      .first()
+      .getByRole("button", { name: `Set Semester ${label} as current` })
       .click();
-    await expect(page.getByText("Current").first()).toBeVisible();
+
+    // The button is only rendered for a semester that is NOT current, so its
+    // disappearance is what proves THIS semester became current — rather than
+    // some other row that happened to already carry the badge.
+    await expect(
+      page.getByRole("button", { name: `Set Semester ${label} as current` }),
+    ).toBeHidden();
+    await expect(page.getByText("Current", { exact: true })).toHaveCount(1);
 
     // The overview stops showing the "create a semester" empty state.
     await page.goto("/academics");
@@ -104,17 +119,28 @@ test.describe("semester", () => {
       await expect(dialog).toBeHidden();
     }
 
+    // A then B, each by name. Naming them is what makes the assertion below
+    // meaningful: the point is that setting B UNSET A, so the test has to know
+    // which one it set last.
     await page
-      .getByRole("button", { name: /set current/i })
-      .first()
+      .getByRole("button", { name: `Set Sem ${label}A as current` })
       .click();
-    await page
-      .getByRole("button", { name: /set current/i })
-      .first()
-      .click();
+    await expect(
+      page.getByRole("button", { name: `Set Sem ${label}A as current` }),
+    ).toBeHidden();
 
-    // Exactly one badge, whichever was set last.
+    await page
+      .getByRole("button", { name: `Set Sem ${label}B as current` })
+      .click();
+    await expect(
+      page.getByRole("button", { name: `Set Sem ${label}B as current` }),
+    ).toBeHidden();
+
+    // Exactly one badge, and A is offerable again — it was demoted.
     await expect(page.getByText("Current", { exact: true })).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: `Set Sem ${label}A as current` }),
+    ).toBeVisible();
   });
 });
 
@@ -215,8 +241,14 @@ test.describe("assignments", () => {
     await expect(page.getByText(/task linked/i).first()).toBeVisible();
 
     // It shows up as real work on Today…
+    //
+    // Scoped to the task's own heading. The title also appears in the command
+    // palette's index and in the linked-assignment caption, so an unscoped
+    // match trips strict mode on four elements — all of them legitimate.
     await page.goto("/today");
-    await expect(page.getByText(new RegExp(`Linked ${label}`))).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: new RegExp(`Linked ${label}`) }).first(),
+    ).toBeVisible();
 
     // …and the assignment is still NOT submitted.
     await page.goto("/academics/assignments");
@@ -246,9 +278,17 @@ test.describe("assignments", () => {
     await page.getByRole("menuitem", { name: /^submission$/i }).click();
     await page.getByRole("menuitem", { name: /^submitted$/i }).click();
 
-    await expect(page.getByText("Submitted").first()).toBeVisible();
+    // Scoped to THIS assignment's row. An unscoped `getByText("Submitted")`
+    // also matches the closed menu's own "Submitted" item and the substring
+    // inside "Not submitted" on other rows, so it can pass or fail for
+    // reasons that have nothing to do with this assignment.
+    const row = page
+      .getByRole("listitem")
+      .filter({ hasText: `Submit ${label}` });
+
+    await expect(row.getByText("Submitted", { exact: true })).toBeVisible();
     // The work status did not move.
-    await expect(page.getByText("Not started").first()).toBeVisible();
+    await expect(row.getByText("Not started", { exact: true })).toBeVisible();
   });
 });
 
@@ -277,7 +317,11 @@ test.describe("exams", () => {
       page.getByText(/preparation tracking not started/i).first(),
     ).toBeVisible();
 
-    await page.getByText(`Midterm ${label}`).click();
+    // The exam card is a link. Targeting the link rather than the bare text
+    // avoids also matching the command palette's copy of the same title.
+    await page
+      .getByRole("link", { name: new RegExp(`Midterm ${label}`) })
+      .click();
 
     const topicInput = page.getByLabel("New topic");
 
@@ -294,9 +338,13 @@ test.describe("exams", () => {
 
     await expect(page.getByText("0% · 0/4")).toBeVisible();
 
-    await page
-      .getByRole("checkbox", { name: /mark Normalisation as covered/i })
-      .click();
+    // Named by its visible label; covered/not-covered is carried by
+    // aria-checked rather than by a change of name.
+    const topic = page.getByRole("checkbox", { name: "Normalisation" });
+
+    await expect(topic).not.toBeChecked();
+    await topic.click();
+    await expect(topic).toBeChecked();
 
     // 1 of 4 is 25% — a plain count, verifiable at a glance.
     await expect(page.getByText("25% · 1/4")).toBeVisible();
@@ -359,7 +407,10 @@ test.describe("integration with the rest of Life OS", () => {
     await page.keyboard.press("ControlOrMeta+k");
 
     const palette = page.getByRole("dialog");
-    await palette.getByRole("combobox").fill(`Cloud ${label}`);
+    // By placeholder: the palette renders a search box, not a listbox-backed
+    // combobox, so the role lookup depends on cmdk internals rather than on
+    // anything the user can see.
+    await palette.getByPlaceholder(/search tasks/i).fill(`Cloud ${label}`);
 
     await expect(palette.getByText(`Cloud ${label}`)).toBeVisible();
   });

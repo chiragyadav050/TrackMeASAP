@@ -233,7 +233,12 @@ export function ProjectBoard({
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
-              <li key={project.id}>
+              // `min-w-0` because a GRID ITEM defaults to `min-width: auto`,
+              // which means "at least as wide as my content". A long project
+              // name therefore widened the column past the viewport and
+              // scrolled the whole page sideways on a 320px screen, defeating
+              // the `truncate` inside the card.
+              <li key={project.id} className="min-w-0">
                 <ProjectCard project={project} />
               </li>
             ))}

@@ -40,7 +40,12 @@ export function ProjectCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2">
+          {/*
+            Same reason as the grid item: a FLEX ITEM also defaults to
+            `min-width: auto`, so without `min-w-0` here the name below refuses
+            to shrink and `truncate` never gets the chance to ellipsise it.
+          */}
+          <div className="flex min-w-0 items-center gap-2">
             <PriorityIndicator priority={project.priority} showLabel={false} />
             <p className="truncate font-medium">{project.name}</p>
           </div>

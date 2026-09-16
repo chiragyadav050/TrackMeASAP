@@ -51,6 +51,22 @@ async function createProject(
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Project name").fill(name);
 
+  // Pick the workspace explicitly rather than trusting the default. Which one
+  // is preselected depends on what the account already contains, so leaving it
+  // implicit made this helper fail intermittently — with the dialog simply
+  // staying open, because an unset workspace is a validation error.
+  const workspace = dialog.getByLabel("Workspace");
+  const options = await workspace.locator("option").all();
+
+  for (const option of options) {
+    const value = await option.getAttribute("value");
+
+    if (value) {
+      await workspace.selectOption(value);
+      break;
+    }
+  }
+
   if (targetEndDate) {
     await dialog.getByLabel("Target end date").fill(targetEndDate);
   }
@@ -123,7 +139,15 @@ test.describe("projects", () => {
     await page.getByLabel("Blocker reason").fill("Waiting on assets");
     await page.getByRole("button", { name: /block/i }).click();
 
-    await expect(page.getByText(/blocked/i).first()).toBeVisible();
+    // NOT an unscoped text match: the status <select> contains a hidden
+    // <option>Blocked</option>, which `.first()` happily returns and which is
+    // never visible. The status badge is the thing under test.
+    await expect(
+      page
+        .getByText("Blocked", { exact: true })
+        .locator("visible=true")
+        .first(),
+    ).toBeVisible();
     await expect(page.getByText("Waiting on assets")).toBeVisible();
 
     await page.getByRole("button", { name: /resolve/i }).click();

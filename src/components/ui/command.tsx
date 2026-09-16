@@ -46,10 +46,6 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       <DialogContent
         className={cn(
           "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
@@ -57,7 +53,32 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
-        {children}
+        {/*
+          INSIDE the popup, not beside it. Title and Description register
+          themselves with the dialog so it can point `aria-labelledby` and
+          `aria-describedby` at them — and that registration reads a store
+          that only exists within the popup. Rendered as siblings they threw
+          "Cannot read properties of undefined (reading 'subscribe')", which
+          the route error boundary swallowed: pressing ⌘K appeared to do
+          nothing at all rather than reporting a crash.
+
+          `sr-only` because the palette shows its own search field instead of
+          a visible heading, but the dialog still needs an accessible name.
+        */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+
+        {/*
+          THE `Command` ROOT IS REQUIRED, not decorative. It owns the state
+          that CommandInput, CommandList and CommandItem all subscribe to for
+          filtering and keyboard navigation. Without it they read an undefined
+          store and throw "Cannot read properties of undefined (reading
+          'subscribe')" the moment the dialog opens — which the route error
+          boundary caught, so ⌘K silently did nothing.
+        */}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   );

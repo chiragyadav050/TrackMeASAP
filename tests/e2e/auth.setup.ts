@@ -24,6 +24,25 @@ import { resetE2EAccount } from "./reset-account";
 
 export const STORAGE_STATE = "tests/e2e/.auth/user.json";
 
+/**
+ * Enters the verification code and waits for Clerk to accept it.
+ *
+ * Returns whether the session landed, rather than throwing: the caller has a
+ * recovery path (resend) and a final `waitForURL` that produces a far better
+ * failure message than a timeout in here would.
+ */
+async function submitCode(
+  page: import("@playwright/test").Page,
+  code: import("@playwright/test").Locator,
+): Promise<boolean> {
+  await code.fill(CLERK_TEST_OTP);
+
+  return page
+    .waitForURL(/\/(today|overview|onboarding)/, { timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+}
+
 setup("authenticate", async ({ page }) => {
   // A real sign-in round-trip to Clerk, including its client-trust step, does
   // not fit the default 30s test budget.
@@ -83,13 +102,28 @@ setup("authenticate", async ({ page }) => {
     // EXACTLY what the `+clerk_test` address exists for: development
     // instances accept this fixed code without sending mail, so the suite
     // never needs an inbox.
-    await code.fill(CLERK_TEST_OTP);
+    //
+    // Submitting is DELIBERATELY left to Clerk, which auto-submits as soon as
+    // the last digit lands. Clicking Continue on top of that in-flight
+    // request sends the verification twice and leaves the button spinning
+    // forever, with the code showing "Success" on screen — a hang that only
+    // ends at the timeout.
+    await submitCode(page, code);
 
-    // Clerk sometimes auto-submits a complete code and sometimes waits.
-    const confirm = page.getByRole("button", { name: "Continue", exact: true });
+    // Occasionally the screen is reached without Clerk having issued a send,
+    // and it answers "You need to send a verification code before attempting
+    // to verify". Resend is the cure, but ONLY once that error is on screen:
+    // resending speculatively invalidates a code that was already in flight,
+    // which causes the very hang described above.
+    const needsSend = page.getByText(/need to send a verification code/i);
 
-    if (await confirm.isVisible().catch(() => false)) {
-      await confirm.click();
+    if (await needsSend.isVisible().catch(() => false)) {
+      await page
+        .getByRole("button", { name: /resend/i })
+        .click()
+        .catch(() => undefined);
+
+      await submitCode(page, code);
     }
   }
 

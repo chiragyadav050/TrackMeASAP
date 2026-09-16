@@ -130,6 +130,11 @@ export function SemesterManager({ semesters }: SemesterManagerProps) {
                     variant="outline"
                     size="sm"
                     disabled={isPending}
+                    // Named after its semester, like Archive below. The visible
+                    // text is identical on every row, so without this a screen
+                    // reader announces "Set current" N times with nothing to
+                    // tell the rows apart.
+                    aria-label={`Set ${semester.name} as current`}
                     onClick={() =>
                       run(
                         () =>

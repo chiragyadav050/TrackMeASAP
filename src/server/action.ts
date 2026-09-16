@@ -59,6 +59,22 @@ export function toFieldErrors(error: z.ZodError): FieldErrors {
     collected[key] = [...(collected[key] ?? []), issue.message];
   }
 
+  // A FORM-LEVEL MESSAGE IS ALWAYS PRESENT, so a rejection can never be
+  // invisible.
+  //
+  // Forms render errors next to the field they belong to, which is the right
+  // default — but only for fields the form actually shows. A schema key with
+  // no visible input (a hidden flag, a checkbox, a field one form omits)
+  // produced a rejection the user could not see: the dialog stayed open, the
+  // inputs cleared, and nothing explained why. That is exactly the shape of
+  // bug that reaches production, because it looks like nothing happened.
+  //
+  // Callers that surface `_form` at the top of the form therefore always have
+  // something to show. Per-field messages still do the precise guiding.
+  if (!collected._form) {
+    collected._form = ["Please check the highlighted fields and try again."];
+  }
+
   return collected;
 }
 

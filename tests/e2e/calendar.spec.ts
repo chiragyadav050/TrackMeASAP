@@ -128,8 +128,11 @@ test.describe("reminders", () => {
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Repeat").selectOption("WEEKDAYS");
 
-    // The day picker only appears for the cadence that uses it.
-    await expect(dialog.getByText("Mon")).toBeVisible();
+    // The day picker only appears for the cadence that uses it. Scoped to the
+    // weekday CHECKBOX: "Mon" also appears in the dialog's preview line, so an
+    // unscoped text match sees two elements and cannot say which proves the
+    // picker rendered.
+    await expect(dialog.getByRole("checkbox", { name: /^mon/i })).toBeVisible();
   });
 });
 
