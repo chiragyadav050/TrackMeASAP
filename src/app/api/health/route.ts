@@ -1,3 +1,5 @@
+import { connect } from "node:net";
+
 import { db } from "@/server/db";
 import { apiSuccess, withApiErrorHandling } from "@/server/api";
 
@@ -29,26 +31,65 @@ type HealthPayload = {
   };
 };
 
+/** A probe must never outlive the health check that asked for it. */
+const PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether a TCP connection to Redis can be opened.
+ *
+ * DELIBERATELY A BARE SOCKET rather than the queue module. `@/server/queue`
+ * imports BullMQ and ioredis at module scope, and this route is the only one
+ * that ever touched it — which is exactly how `/api/health` came to be the
+ * single broken endpoint in production: the bundler hoisted the import into
+ * the serverless function's cold start, ioredis found no Redis, and retried
+ * against 127.0.0.1:6379 forever. The request never returned at all; it hung
+ * until the platform killed it, while every other route answered in under a
+ * second. Making the import lazy did not help, because the evaluation still
+ * happened at load.
+ *
+ * A health check only needs to know whether the port answers, and a socket
+ * answers that without a client library — so the dependency is gone rather
+ * than deferred. It also cannot hang: the timeout is enforced here.
+ */
+async function isRedisReachable(url: string): Promise<boolean> {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(url);
+  } catch {
+    // A malformed URL is a configuration problem, not a reachable Redis.
+    return false;
+  }
+
+  const port = Number(parsed.port) || 6379;
+
+  return new Promise<boolean>((resolve) => {
+    const socket = connect({ host: parsed.hostname, port });
+
+    const settle = (reachable: boolean): void => {
+      socket.destroy();
+      resolve(reachable);
+    };
+
+    socket.setTimeout(PROBE_TIMEOUT_MS);
+    socket.once("connect", () => settle(true));
+    socket.once("timeout", () => settle(false));
+    socket.once("error", () => settle(false));
+  });
+}
+
 export const GET = withApiErrorHandling("api.health", async () => {
   await db.$queryRaw`SELECT 1`;
 
   // Redis is OPTIONAL. An unreachable queue is reported, not thrown — the
   // application is fully usable without a worker, and a health check that
   // fails on an optional dependency would take a working app out of rotation.
-  //
-  // IMPORTED LAZILY, AND ONLY WHEN REDIS IS ACTUALLY CONFIGURED. `@/server/queue`
-  // pulls in BullMQ and ioredis at module scope. A static import therefore
-  // dragged both into this serverless function's cold start, where — with no
-  // Redis to talk to — the request never completed at all: `/api/health` hung
-  // until the platform timed it out, while every other route was fine.
-  //
-  // Reading the variable here rather than calling `isQueueConfigured()` is the
-  // whole point: asking the queue module whether a queue exists would import
-  // the very thing being avoided. This is the same separation that keeps
-  // `src/server/jobs.ts` free of BullMQ so the cron route can use it.
-  const queue = process.env.REDIS_URL?.trim()
-    ? await import("@/server/queue").then((module) => module.getQueueHealth())
-    : { configured: false, reachable: false };
+  const redisUrl = process.env.REDIS_URL?.trim();
+
+  const queue = {
+    configured: Boolean(redisUrl),
+    reachable: redisUrl ? await isRedisReachable(redisUrl) : false,
+  };
 
   return apiSuccess<HealthPayload>(
     {
