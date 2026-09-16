@@ -479,3 +479,90 @@ describe("availability", () => {
     expect(isAgentAvailable()).toBe(hasKey);
   });
 });
+
+describe("exam.create", () => {
+  /**
+   * These exist because of a real incident, and the shape of it matters more
+   * than the feature.
+   *
+   * Academics was READABLE but not writable by the assistant. Asked to add an
+   * exam, the model had no tool to call — and replied that it had added the
+   * exam anyway. Nothing was written. The user believed the system was
+   * tracking an exam that did not exist.
+   *
+   * A false confirmation is worse than a refusal: a refusal leaves the user
+   * doing the work themselves, while a false confirmation makes them stop.
+   */
+  test("fails with a relayable message when no semester exists", async () => {
+    const outcome = await executeTool(
+      "exam.create",
+      { title: "[TEST] Physics", date: "2026-12-01" },
+      contextFor(owner),
+    );
+
+    expect(outcome.status).toBe("ERROR");
+
+    // The message has to be usable verbatim by the assistant, and has to say
+    // what to do next — "invalid input" would send the user nowhere.
+    if (outcome.status === "ERROR") {
+      expect(outcome.message).toMatch(/semester/i);
+      expect(outcome.message).toMatch(/academics/i);
+    }
+
+    // And nothing was written on the way to failing.
+    expect(await db.exam.count({ where: { profileId: owner.id } })).toBe(0);
+  });
+
+  test("writes a real exam into the CURRENT semester", async () => {
+    await db.semester.create({
+      data: {
+        profileId: owner.id,
+        name: "[TEST] Autumn",
+        academicYear: "2025-26",
+        startDate: new Date("2026-01-05"),
+        endDate: new Date("2026-05-30"),
+        isCurrent: true,
+      },
+    });
+
+    const outcome = await executeTool(
+      "exam.create",
+      { title: "[TEST] Physics", date: "2026-12-01" },
+      contextFor(owner),
+    );
+
+    expect(outcome.status).toBe("OK");
+
+    // The claim is checked against the database, not against the tool's reply.
+    const exam = await db.exam.findFirstOrThrow({
+      where: { profileId: owner.id },
+    });
+
+    expect(exam.title).toBe("[TEST] Physics");
+    expect(exam.startAt).not.toBeNull();
+  });
+
+  test("never reaches another profile's semester", async () => {
+    await db.semester.create({
+      data: {
+        profileId: intruder.id,
+        name: "[TEST] Not yours",
+        academicYear: "2025-26",
+        startDate: new Date("2026-01-05"),
+        endDate: new Date("2026-05-30"),
+        isCurrent: true,
+      },
+    });
+
+    // The owner has no semester of their own, and the intruder's must not
+    // stand in for one.
+    const outcome = await executeTool(
+      "exam.create",
+      { title: "[TEST] Physics", date: "2026-12-01" },
+      contextFor(owner),
+    );
+
+    expect(outcome.status).toBe("ERROR");
+    expect(await db.exam.count()).toBe(0);
+  });
+});

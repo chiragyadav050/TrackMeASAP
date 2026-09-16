@@ -5,6 +5,9 @@ import { z } from "zod";
 import { localDateKey } from "@/lib/time";
 import { db } from "@/server/db";
 import { getAcademicOverview } from "@/services/academics/academic.query";
+import { EXAM_TYPES } from "@/services/academics/academic.schema";
+import { createExam } from "@/services/academics/exam.service";
+import { getCurrentSemester } from "@/services/academics/semester.service";
 import {
   getGoalDetail,
   listGoals,
@@ -256,6 +259,91 @@ export function registerAllTools(): void {
     handler: async (_args, { profile }) => {
       const overview = await getAcademicOverview(profile);
       return overview.attendance;
+    },
+  });
+
+  /**
+   * Scheduling an exam.
+   *
+   * THIS TOOL EXISTS BECAUSE ITS ABSENCE WAS WORSE THAN A MISSING FEATURE.
+   * Academics was readable but not writable, so "add my maths exam on Friday"
+   * had nothing to call — and the model answered that it had added the exam
+   * anyway. A confident false confirmation is the most damaging thing this
+   * assistant can do: the user stops tracking the exam because they believe
+   * the system is.
+   *
+   * The semester is resolved HERE rather than asked of the model. Semester ids
+   * are not something a user says out loud, and a model guessing at one would
+   * fail ownership checks or, worse, aim at a real id belonging to someone
+   * else. Same for the subject, which is matched by name against this
+   * profile's own subjects.
+   *
+   * When there is no current semester the tool FAILS with a message the
+   * assistant can relay verbatim. That is the honest outcome: an exam has
+   * nowhere to live until a semester exists, and saying so is better than
+   * inventing a semester the user never set up.
+   */
+  registerTool({
+    name: "exam.create",
+    description:
+      "Schedule an exam in the user's current semester. Requires a current semester to exist.",
+    schema: z.object({
+      title: z.string().min(1).max(200),
+      type: z.enum(EXAM_TYPES).default("MIDTERM"),
+      date: dateSchema.optional(),
+      time: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/, "Use HH:MM.")
+        .optional(),
+      /** By NAME, not id — matched against the user's own subjects. */
+      subject: z.string().max(120).optional(),
+      location: z.string().max(120).optional(),
+    }),
+    risk: "SAFE",
+    summarise: (args) =>
+      `Schedule the exam "${args.title}"${args.date ? ` on ${args.date}` : ""}`,
+    handler: async (args, { profile }) => {
+      const semester = await getCurrentSemester(profile.id);
+
+      if (!semester) {
+        throw new Error(
+          "There is no current semester, and an exam has to belong to one. Create a semester under Academics first, then ask again.",
+        );
+      }
+
+      // Scoped to this profile, so a name can never reach another user's
+      // subject. An unmatched name is not an error: the exam is still worth
+      // recording, just without a subject link.
+      const subject = args.subject
+        ? await db.subject.findFirst({
+            where: {
+              profileId: profile.id,
+              semesterId: semester.id,
+              name: { equals: args.subject, mode: "insensitive" },
+            },
+            select: { id: true, name: true },
+          })
+        : null;
+
+      const exam = await createExam(profile.id, profile.timeZone, {
+        semesterId: semester.id,
+        subjectId: subject?.id,
+        title: args.title,
+        type: args.type,
+        date: args.date,
+        time: args.time,
+        status: "UPCOMING",
+      } as never);
+
+      return {
+        id: exam.id,
+        title: exam.title,
+        semester: semester.name,
+        // Reported so the assistant can tell the user the subject did not
+        // match, instead of quietly dropping what they asked for.
+        subject: subject?.name ?? null,
+        subjectRequested: args.subject ?? null,
+      };
     },
   });
 
