@@ -34,7 +34,25 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 /** Long enough for a tool-using turn, short enough not to pin a request. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
-export const DEFAULT_MODEL = "gemini-2.0-flash";
+/**
+ * The model to call.
+ *
+ * OVERRIDABLE BY ENVIRONMENT, and that is the point. This constant said
+ * `gemini-2.0-flash`, which Google retired: every AI message failed with a
+ * 404 while the API key itself was perfectly valid. Its successor
+ * `gemini-2.5-flash` is already closed to new keys too, which is the whole
+ * problem in one line — a pinned model name is a dated asset, and when it
+ * expires the app breaks completely rather than degrading.
+ *
+ * With the override, the next retirement is a change to one environment
+ * variable rather than a code change and a redeploy. `gemini-flash-latest`
+ * is the obvious value to reach for if this default ever 404s again.
+ *
+ * Verified against the live API with a function-calling request before being
+ * chosen, because tool use — not plain text — is what this agent depends on.
+ */
+export const DEFAULT_MODEL =
+  process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
 function getApiKey(): string | null {
   const key = process.env.GEMINI_API_KEY?.trim();
