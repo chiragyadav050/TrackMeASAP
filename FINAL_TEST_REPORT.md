@@ -170,7 +170,8 @@ spec. Automation only ever gets a Testing Token past bot protection;
 authentication itself is untouched, so a green run means sign-in genuinely
 works.
 
-**Chromium: 124 / 124 passing.** Firefox: 123 / 124; WebKit not yet run.
+**Chromium: 124 / 124 passing.** Firefox: 123 / 124. WebKit cannot be run on
+this machine at all — see §6.4.
 
 The single Firefox failure is a shared-state artifact, not a defect: the suite
 runs against ONE test account that is reset once at sign-in, so a spec
@@ -221,6 +222,28 @@ prompt-injection resistance, usage caps, and honest-offline behaviour.
 would prove the mock works, and the one thing the AI page must never do —
 show an answer that did not come from a model — is exactly what a mock makes
 easy to do by accident.
+
+### 6.4 WebKit — BLOCKED by a broken browser build, not by the app
+
+WebKit cannot be launched on this machine. Playwright's WebKit build for
+macOS 23.3.0 / arm64 dies with `Bus error: 10` — 208 crashes across one run,
+which is every launch it attempted. A full suite run reported 104 failed /
+20 passed purely as a consequence.
+
+This is NOT an application failure, and the distinction is verifiable: a
+five-line script that launches WebKit and renders `<h1>hello</h1>` — touching
+none of this codebase — fails identically with "Target page, context or
+browser has been closed". The browser never gets far enough to load Life OS.
+
+**Therefore unverified on Safari:** nothing specific to Safari's engine has
+been exercised — its date-input rendering, its flexbox and `min-w-0`
+behaviour, and its handling of the dialog primitives. Chromium and Firefox
+cover the same code paths and both pass, and no Safari-specific API is used
+anywhere, so the risk is low rather than absent.
+
+**The unblock** is `pnpm exec playwright install --force webkit` on a machine
+where that build runs, or running the suite in CI on a supported image. The
+specs need no change.
 
 ### 6.4 Not limitations
 
@@ -287,24 +310,25 @@ that is recorded in the per-phase reports rather than quietly corrected.
 **Implementation: 100%.** Every module in the Phase 4–10 brief is built.
 Nothing was skipped, stubbed, or left as a placeholder.
 
-**Verification: ~97% overall.**
+**Verification: ~96% overall.**
 
-| Layer                           | Verified                             |
-| ------------------------------- | ------------------------------------ |
-| Data model & migrations         | 100%                                 |
-| Pure logic (all derive modules) | 100%                                 |
-| Services & ownership            | 100%                                 |
-| Query & aggregation layers      | 100%                                 |
-| Server actions                  | 100%                                 |
-| Background workers              | 100% (live)                          |
-| Cross-surface integration       | 100%                                 |
-| UI implementation               | 100%                                 |
-| **UI verified in a browser**    | **100%** (Chromium; Firefox 123/124) |
-| **Live Telegram delivery**      | **0%**                               |
-| **Live Gemini calls**           | **0%**                               |
+| Layer                           | Verified                                                       |
+| ------------------------------- | -------------------------------------------------------------- |
+| Data model & migrations         | 100%                                                           |
+| Pure logic (all derive modules) | 100%                                                           |
+| Services & ownership            | 100%                                                           |
+| Query & aggregation layers      | 100%                                                           |
+| Server actions                  | 100%                                                           |
+| Background workers              | 100% (live)                                                    |
+| Cross-surface integration       | 100%                                                           |
+| UI implementation               | 100%                                                           |
+| **UI verified in a browser**    | **100%** Chromium · 123/124 Firefox · WebKit unrunnable (§6.4) |
+| **Live Telegram delivery**      | **0%**                                                         |
+| **Live Gemini calls**           | **0%**                                                         |
 
-The missing ~3% is not unfinished work. It is two external services that
-cannot be exercised from here, each with a concrete unblock:
+The missing ~4% is not unfinished work. It is two external services and one
+broken browser build, none of which can be exercised from here, each with a
+concrete unblock:
 
 - **A Telegram bot token + a public HTTPS URL** → the webhook can be
   registered and the bot works end to end. The handler itself is covered by 32
@@ -313,7 +337,9 @@ cannot be exercised from here, each with a concrete unblock:
   lazily on first use. Without one the assistant reports itself unavailable
   rather than pretending.
 
-Both are deployment steps, not code. See docs/DEPLOYMENT.md.
+- **A working WebKit build** (or CI) → the suite runs unchanged; see §6.4.
+
+The first two are deployment steps, not code. See docs/DEPLOYMENT.md.
 
 ---
 
