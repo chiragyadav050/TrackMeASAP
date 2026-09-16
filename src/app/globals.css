@@ -277,6 +277,16 @@
 
   body {
     @apply bg-background text-body text-foreground antialiased;
+
+    /* A LONG UNBREAKABLE STRING MUST NOT BREAK THE PAGE.
+       Task titles, project names and notes are user input, and a pasted URL
+       or a long identifier has no space to wrap at. Without this the word
+       pushes its container wider than the viewport and the whole page scrolls
+       sideways — which is exactly how this surfaced, on a 320px screen.
+       `anywhere` rather than `break-word` so the container's intrinsic size is
+       computed with the break allowed, which is what actually stops the
+       overflow rather than merely wrapping after the fact. */
+    overflow-wrap: anywhere;
     font-feature-settings:
       "cv02" 1,
       "cv03" 1,

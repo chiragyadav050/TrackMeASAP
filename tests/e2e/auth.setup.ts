@@ -149,7 +149,7 @@ setup("authenticate", async ({ page }) => {
     // driving the zone picker proved brittle because the option list comes
     // from the browser's own Intl data.
     await nameField.fill("E2E Test User");
-    await page.getByRole("button", { name: /enter life os/i }).click();
+    await page.getByRole("button", { name: /start using life os/i }).click();
 
     // The action redirects on success; on failure it renders a field error.
     await page.waitForURL((url) => !url.pathname.startsWith("/onboarding"), {

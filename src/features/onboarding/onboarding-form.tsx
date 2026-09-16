@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Field, fieldAria } from "@/components/form/field";
 import { NativeSelect } from "@/components/form/native-select";
@@ -11,7 +11,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { completeOnboardingAction } from "@/features/settings/actions";
-import { AcademicStep } from "@/features/onboarding/academic-step";
 import { routes } from "@/config/site";
 import { IDLE_ACTION_STATE, type ActionState } from "@/types/action";
 import { useDetectedTimeZone } from "@/hooks/use-detected-time-zone";
@@ -39,11 +38,27 @@ type OnboardingFormProps = {
 };
 
 /**
- * Six questions, one screen, no wizard.
+ * ONE TAP.
  *
- * Everything asked here is something the product genuinely cannot work
- * without — a name to greet you by, a time zone to resolve "today" in, and
- * the two daily windows that future scheduling will plan around.
+ * This screen used to ask six questions before anyone could see the product,
+ * and every one of them already had a defensible answer: the name comes from
+ * the sign-in provider, the time zone comes from the browser, and week start,
+ * theme and the two daily windows all have defaults that suit most people and
+ * are editable in Settings forever after.
+ *
+ * Asking anyway cost the thing that matters most — the first minute. A setup
+ * form is not the product, and a person who signed up ten seconds ago has no
+ * basis for deciding when their study hours are; they will guess, and a guess
+ * stored as a preference is worse than a default, because it looks deliberate.
+ *
+ * So the defaults are stated as facts, not questions, and everything is still
+ * one disclosure away for the minority who want to set it now. That is
+ * progressive disclosure doing its actual job: the common path is a single
+ * button, and nothing has been taken away.
+ *
+ * The inputs stay MOUNTED inside the disclosure rather than being conditionally
+ * rendered — a collapsed `<details>` still submits its fields, so the action
+ * and its schema are unchanged whether or not anyone opens it.
  */
 export function OnboardingForm({ profile }: OnboardingFormProps) {
   const [state, formAction, isPending] = useActionState<
@@ -54,19 +69,11 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
   const router = useRouter();
   const timeZones = useMemo(() => listTimeZones(), []);
 
-  /**
-   * Which of the two stages is on screen — DERIVED, not stored.
-   *
-   * The profile stage is a real `<form>` posting to a server action; the
-   * academic stage calls a different one. Splitting them is what lets the
-   * second be genuinely optional: skipping it still leaves a completed
-   * profile, because that was already saved by the time this advances.
-   *
-   * Advancing on the action's own result rather than redirecting from inside
-   * the action means a failed submit re-renders the form with its field
-   * errors intact.
-   */
-  const stage = state.status === "success" ? "academics" : "profile";
+  useEffect(() => {
+    if (state.status === "success") {
+      router.replace(routes.today);
+    }
+  }, [state, router]);
 
   // The browser's zone is only knowable on the client. Reading it through a
   // store (rather than assigning it in an effect) means the server renders the
@@ -74,15 +81,11 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
   // cascading re-render.
   const detectedTimeZone = useDetectedTimeZone(profile.timeZone);
 
-  // A zone the user has already saved always wins over detection; the
-  // detected value only fills in the untouched `UTC` default.
   const suggestedTimeZone =
     profile.timeZone === DEFAULT_TIME_ZONE
       ? detectedTimeZone
       : profile.timeZone;
 
-  // `null` means "the user has not touched the picker", so the suggestion
-  // stays live. Derived state, not synchronised state.
   const [chosenTimeZone, setChosenTimeZone] = useState<string | null>(null);
   const timeZone = chosenTimeZone ?? suggestedTimeZone;
 
@@ -92,38 +95,31 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
       ? (fieldErrors?._form?.join(" ") ?? state.message)
       : null;
 
-  if (stage === "academics") {
-    return (
-      <div className="space-y-7">
-        <StageIndicator current={2} />
-        <AcademicStep onDone={() => router.replace(routes.overview)} />
-      </div>
-    );
-  }
+  // A name is the one thing worth confirming: it is what every greeting in the
+  // product says back, and the provider's version is sometimes an email stub.
+  const [name, setName] = useState(profile.displayName);
 
   return (
-    <form action={formAction} className="space-y-7" noValidate>
-      <StageIndicator current={1} />
-
+    <form action={formAction} className="space-y-8" noValidate>
       {formError ? (
         <Alert variant="destructive">
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className="space-y-5">
         <Field
           id="displayName"
           label="What should we call you?"
           errors={fieldErrors?.displayName}
-          className="sm:col-span-2"
         >
           <Input
             {...fieldAria("displayName", {
               hasError: Boolean(fieldErrors?.displayName),
             })}
             name="displayName"
-            defaultValue={profile.displayName}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
             autoComplete="name"
             autoFocus
             maxLength={80}
@@ -131,136 +127,133 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
           />
         </Field>
 
-        <Field
-          id="timeZone"
-          label="Time zone"
-          hint="Used to decide when your day starts and ends."
-          errors={fieldErrors?.timeZone}
-        >
-          <NativeSelect
-            {...fieldAria("timeZone", {
-              hasHint: true,
-              hasError: Boolean(fieldErrors?.timeZone),
-            })}
-            name="timeZone"
-            value={timeZone}
-            onChange={(event) => setChosenTimeZone(event.target.value)}
-          >
-            {timeZones.map((zone) => (
-              <option key={zone} value={zone}>
-                {zone.replaceAll("_", " ")}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-
-        <Field
-          id="weekStart"
-          label="Week starts on"
-          errors={fieldErrors?.weekStart}
-        >
-          <NativeSelect
-            {...fieldAria("weekStart", {
-              hasError: Boolean(fieldErrors?.weekStart),
-            })}
-            name="weekStart"
-            defaultValue={profile.weekStart}
-          >
-            {WEEK_STARTS.map((value) => (
-              <option key={value} value={value}>
-                {WEEK_START_LABELS[value]}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-
-        <TimeRangeField
-          label="Working hours"
-          hint="When work and classes usually happen."
-          startName="workingHoursStart"
-          endName="workingHoursEnd"
-          defaultStart={profile.workingHoursStart}
-          defaultEnd={profile.workingHoursEnd}
-          errors={fieldErrors?.workingHoursEnd}
-        />
-
-        <TimeRangeField
-          label="Study hours"
-          hint="Your usual window for focused study."
-          startName="studyHoursStart"
-          endName="studyHoursEnd"
-          defaultStart={profile.studyHoursStart}
-          defaultEnd={profile.studyHoursEnd}
-          errors={fieldErrors?.studyHoursEnd}
-        />
-
-        <Field
-          id="themePreference"
-          label="Appearance"
-          errors={fieldErrors?.themePreference}
-          className="sm:col-span-2"
-        >
-          <NativeSelect
-            {...fieldAria("themePreference", {
-              hasError: Boolean(fieldErrors?.themePreference),
-            })}
-            name="themePreference"
-            defaultValue={profile.themePreference}
-          >
-            {THEME_PREFERENCES.map((value) => (
-              <option key={value} value={value}>
-                {THEME_LABELS[value]}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
+        {/* The detected zone stated as a fact. It is right almost always, and
+            when it is wrong the disclosure below fixes it in two clicks. */}
+        <p className="text-meta text-muted-foreground">
+          Your day will run on{" "}
+          <span className="font-medium text-foreground">
+            {timeZone.replaceAll("_", " ")}
+          </span>
+          , detected from this device.
+        </p>
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button type="submit" size="lg" disabled={isPending}>
-          {isPending ? "Setting up…" : "Enter Life OS"}
+      {/*
+        Native `<details>`: keyboard-operable, screen-reader-announced and
+        functional before JavaScript loads — none of which a hand-rolled
+        toggle gives for free.
+      */}
+      <details className="group rounded-xl border border-border-subtle bg-surface-sunken/40">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-meta font-medium">
+          Adjust preferences
+          <ChevronDown
+            className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none"
+            aria-hidden
+          />
+        </summary>
+
+        <div className="grid gap-5 border-t border-border-subtle p-4 sm:grid-cols-2">
+          <Field
+            id="timeZone"
+            label="Time zone"
+            errors={fieldErrors?.timeZone}
+            className="sm:col-span-2"
+          >
+            <NativeSelect
+              {...fieldAria("timeZone", {
+                hasError: Boolean(fieldErrors?.timeZone),
+              })}
+              name="timeZone"
+              value={timeZone}
+              onChange={(event) => setChosenTimeZone(event.target.value)}
+            >
+              {timeZones.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone.replaceAll("_", " ")}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+
+          <Field
+            id="weekStart"
+            label="Week starts on"
+            errors={fieldErrors?.weekStart}
+          >
+            <NativeSelect
+              {...fieldAria("weekStart", {
+                hasError: Boolean(fieldErrors?.weekStart),
+              })}
+              name="weekStart"
+              defaultValue={profile.weekStart}
+            >
+              {WEEK_STARTS.map((value) => (
+                <option key={value} value={value}>
+                  {WEEK_START_LABELS[value]}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+
+          <Field
+            id="themePreference"
+            label="Appearance"
+            errors={fieldErrors?.themePreference}
+          >
+            <NativeSelect
+              {...fieldAria("themePreference", {
+                hasError: Boolean(fieldErrors?.themePreference),
+              })}
+              name="themePreference"
+              defaultValue={profile.themePreference}
+            >
+              {THEME_PREFERENCES.map((value) => (
+                <option key={value} value={value}>
+                  {THEME_LABELS[value]}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+
+          <TimeRangeField
+            label="Working hours"
+            hint="When work and classes usually happen."
+            startName="workingHoursStart"
+            endName="workingHoursEnd"
+            defaultStart={profile.workingHoursStart}
+            defaultEnd={profile.workingHoursEnd}
+            errors={fieldErrors?.workingHoursEnd}
+          />
+
+          <TimeRangeField
+            label="Study hours"
+            hint="Your usual window for focused study."
+            startName="studyHoursStart"
+            endName="studyHoursEnd"
+            defaultStart={profile.studyHoursStart}
+            defaultEnd={profile.studyHoursEnd}
+            errors={fieldErrors?.studyHoursEnd}
+          />
+        </div>
+      </details>
+
+      <div className="space-y-3">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={isPending}
+          className="w-full sm:w-auto"
+        >
+          {isPending ? "Setting up…" : "Start using Life OS"}
           {isPending ? null : (
             <ArrowRight data-icon="inline-end" className="size-4" />
           )}
         </Button>
 
         <p className="text-label text-muted-foreground">
-          You can change all of this later in Settings.
+          Everything here is editable later in Settings. Nothing is permanent.
         </p>
       </div>
     </form>
-  );
-}
-
-/**
- * Where the user is in setup.
- *
- * Two steps is few enough that a bare "1 of 2" would do, but the bars carry
- * one thing a number cannot: that the second step is short. People abandon
- * setup when they cannot see the end of it.
- *
- * `aria-hidden` on the bars with the count read out instead — a screen reader
- * gets the fact, not a description of two rectangles.
- */
-function StageIndicator({ current }: { readonly current: 1 | 2 }) {
-  return (
-    <div className="space-y-2">
-      <p className="text-label font-medium text-muted-foreground">
-        Step {current} of 2
-      </p>
-
-      <div className="flex gap-1.5" aria-hidden>
-        {[1, 2].map((step) => (
-          <span
-            key={step}
-            className={
-              step <= current
-                ? "h-1 flex-1 rounded-full bg-brand"
-                : "h-1 flex-1 rounded-full bg-border"
-            }
-          />
-        ))}
-      </div>
-    </div>
   );
 }

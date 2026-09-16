@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createHash } from "node:crypto";
 
@@ -444,8 +444,14 @@ describe("command handling", () => {
     expect(after.reply).toContain("/start");
   });
 
-  test("plain text is refused honestly, not faked", async () => {
+  test("plain text with no AI configured is refused honestly, not faked", async () => {
     await linkChat(owner.id, OWNER_CHAT);
+
+    // The key is REMOVED for this test rather than relied upon. Two reasons:
+    // a suite that calls the real Gemini API is slow, costs quota and is not
+    // deterministic; and the behaviour actually worth pinning down is what
+    // happens when the assistant CANNOT answer.
+    vi.stubEnv("GEMINI_API_KEY", "");
 
     const result = await handleMessage(
       OWNER_CHAT,
@@ -454,9 +460,16 @@ describe("command handling", () => {
       NOW,
     );
 
-    // No invented AI reply before Phase 8 exists.
+    vi.unstubAllEnvs();
+
+    // The reply says why, and does not invent an answer. This assertion used
+    // to check for "/help" because free text was unsupported — Phase 8 shipped
+    // and the bot now routes it to the same agent the web app uses, so what
+    // matters is that an unavailable agent degrades honestly instead of
+    // producing something that reads like a real answer.
     expect(result.wasHandled).toBe(false);
-    expect(result.reply).toContain("/help");
+    expect(result.reply).toMatch(/AI provider is configured|could not answer/i);
+    expect(result.reply).not.toMatch(/here is|you should|i have added/i);
   });
 });
 

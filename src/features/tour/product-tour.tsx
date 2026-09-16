@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { completeTourCommand } from "@/features/settings/actions";
@@ -60,8 +60,6 @@ export function ProductTour() {
   const [rect, setRect] = useState<Rect | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
 
-  const panelRef = useRef<HTMLDivElement>(null);
-
   // MEASURED AFTER PAINT, deliberately. Which steps have targets is a fact
   // about the rendered DOM, so it cannot be known during render — and setting
   // it synchronously inside the effect would run before layout has settled as
@@ -97,15 +95,6 @@ export function ProductTour() {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [step]);
-
-  // Focus moves to the panel so the tour is operable by keyboard from the
-  // moment it opens, and so a screen reader announces it rather than leaving
-  // focus on whatever was behind.
-  useEffect(() => {
-    if (step) {
-      panelRef.current?.focus();
-    }
   }, [step]);
 
   const finish = useCallback((): void => {
@@ -179,27 +168,29 @@ export function ProductTour() {
 
   return (
     <div
-      className="fixed inset-0 z-[100]"
-      role="dialog"
-      aria-modal="true"
+      // NOT MODAL, AND `pointer-events-none` IS THE REASON.
+      //
+      // This started as a dimmed overlay with a full-screen scrim, which
+      // imprisoned the user: nothing in the application could be clicked until
+      // they had finished or skipped five steps. A product tour exists to help
+      // someone start using the app — blocking them from using it while it
+      // plays is the exact opposite, and it is also how this broke 26 browser
+      // tests, every one of them a real click the scrim swallowed.
+      //
+      // So the overlay lets every event through and only the panel itself
+      // takes pointers. Someone who ignores the tour and just starts working
+      // is not fighting it, which is the behaviour to design for.
+      className="pointer-events-none fixed inset-0 z-[100]"
+      // `region`, NOT `dialog`. Once the tour stopped being modal, calling it a
+      // dialog was simply inaccurate — and it actively collided with the
+      // application's own dialogs, both for assistive technology navigating by
+      // dialog and for any query that asks for one.
+      role="region"
       aria-labelledby="tour-title"
     >
       {/*
-        The scrim is click-to-dismiss, which is what people try first. It sits
-        behind the cutout so the highlighted control stays legible.
-      */}
-      <button
-        type="button"
-        className="absolute inset-0 bg-foreground/50"
-        onClick={finish}
-        aria-label="Close the tour"
-        tabIndex={-1}
-      />
-
-      {/*
-        The highlight. `outline` rather than a border so it cannot change the
-        target's layout, and a huge spread shadow to lift it out of the scrim
-        without a second overlay element.
+        The highlight. `outline` rather than a border, so it cannot change the
+        target's layout or nudge the page by a pixel while the tour is open.
       */}
       <span
         aria-hidden
@@ -209,14 +200,18 @@ export function ProductTour() {
           left: rect.left,
           width: rect.width,
           height: rect.height,
-          boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.0)",
         }}
       />
 
+      {/*
+        ANNOUNCED, NOT FOCUSED. A modal dialog should take focus; a coach mark
+        that sits alongside the working UI must not, or it yanks the caret out
+        of whatever the user was typing. `aria-live` gets the step read aloud
+        without stealing anything.
+      */}
       <div
-        ref={panelRef}
-        tabIndex={-1}
-        className="absolute w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-lg outline-none"
+        aria-live="polite"
+        className="shadow-overlay pointer-events-auto absolute w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-4 text-popover-foreground outline-none"
         style={{ top, left }}
       >
         <p className="text-label font-medium text-muted-foreground">

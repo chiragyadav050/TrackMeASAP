@@ -1,7 +1,9 @@
 import "server-only";
 
 import type { Profile, TelegramLink } from "@/generated/prisma/client";
+import { toAppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
+import { runAgentTurn } from "@/services/ai/agent.service";
 import { formatDuration, localDateKey, localTimeKey } from "@/lib/time";
 import { db } from "@/server/db";
 import { createTask, setTaskCompletion } from "@/services/task/task.service";
@@ -195,6 +197,65 @@ async function handleLink(
   return { reply, command: "/link", wasHandled: false };
 }
 
+/**
+ * Free text, answered by the same assistant the web app uses.
+ *
+ * This used to reply "Conversational AI arrives in Phase 8" — a placeholder
+ * written in Phase 7 that outlived the phase it was waiting for. Phase 8
+ * shipped, the agent has been live on the web for some time, and the bot went
+ * on telling people to send slash commands.
+ *
+ * NO SEPARATE BRAIN. It calls `runAgentTurn` with `source: "TELEGRAM"`, so
+ * Telegram gets exactly the tools, ownership checks, daily limit and refusal
+ * behaviour the web assistant has. A second implementation would be a second
+ * place for authorisation to drift.
+ *
+ * PENDING CONFIRMATIONS ARE SURFACED AS TEXT, and deliberately phrased as not
+ * done. A destructive action proposed over chat must never look completed —
+ * that is the whole reason the agent returns them instead of acting.
+ */
+async function handleConversation(
+  profile: Profile,
+  text: string,
+  now: Date,
+): Promise<HandlerResult> {
+  try {
+    const turn = await runAgentTurn(
+      profile,
+      { message: text, source: "TELEGRAM" },
+      now,
+    );
+
+    const confirmations = turn.pendingConfirmations
+      .map((pending) => `• ${pending.summary}`)
+      .join("\n");
+
+    const reply = confirmations
+      ? `${turn.reply}\n\nI have NOT done this yet — reply in the app to confirm:\n${confirmations}`
+      : turn.reply;
+
+    return { reply, command: null, wasHandled: true };
+  } catch (error) {
+    // The agent throws a readable message for the cases that matter: no API
+    // key configured, and the daily request limit. Relaying it verbatim beats
+    // a generic apology, and beats pretending the question was understood.
+    const appError = toAppError(error);
+
+    log.warn("Telegram conversation failed", {
+      profileId: profile.id,
+      code: appError.code,
+    });
+
+    return {
+      reply:
+        appError.fieldErrors?._form?.join(" ") ??
+        "I could not answer that just now. Try again in a moment.",
+      command: null,
+      wasHandled: false,
+    };
+  }
+}
+
 async function handleLinked(
   profile: Profile,
   link: TelegramLink,
@@ -202,12 +263,7 @@ async function handleLinked(
   now: Date,
 ): Promise<HandlerResult> {
   if (parsed.kind === "TEXT") {
-    return {
-      reply:
-        "I only understand commands for now. Send /help to see the list. (Conversational AI arrives in Phase 8.)",
-      command: null,
-      wasHandled: false,
-    };
+    return handleConversation(profile, parsed.text, now);
   }
 
   if (parsed.kind === "UNKNOWN_COMMAND") {

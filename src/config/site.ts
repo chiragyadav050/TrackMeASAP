@@ -42,5 +42,7 @@ export const routes = {
   signUp: bareCatchAllPath("/sign-up"),
   onboarding: "/onboarding",
   overview: "/overview",
+  /** Where a finished setup lands: the screen that answers "what now". */
+  today: "/today",
   settings: "/settings",
 } as const satisfies Record<string, Route>;

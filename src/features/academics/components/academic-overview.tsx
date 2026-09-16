@@ -12,6 +12,7 @@ import {
 import Link from "next/link";
 
 import { EmptyState } from "@/components/common/empty-state";
+import { QuickSetupButton } from "@/features/academics/components/quick-setup-button";
 import { SectionCard } from "@/components/common/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,12 +41,7 @@ export function AcademicOverview({ view }: { view: AcademicOverviewDto }) {
           icon={GraduationCap}
           title="Start by creating your current semester."
           description="Everything academic — subjects, attendance, assignments and exams — hangs off a semester."
-          action={
-            <Button
-              size="sm"
-              render={<Link href="/academics/semesters">Create semester</Link>}
-            />
-          }
+          action={<QuickSetupButton />}
         />
       </div>
     );

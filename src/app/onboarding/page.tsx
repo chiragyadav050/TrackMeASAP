@@ -43,12 +43,12 @@ export default async function OnboardingPage() {
             <p className="text-label-caps text-muted-foreground">
               Welcome to {siteConfig.name}
             </p>
-            <h1 className="text-title font-semibold tracking-tight text-balance">
-              Let&apos;s set up your command center.
+            <h1 className="font-display text-display text-balance">
+              You&apos;re in.
             </h1>
-            <p className="max-w-lg text-pretty text-muted-foreground">
-              Six quick answers. They decide how Life OS reads your day —
-              nothing here is busywork.
+            <p className="max-w-lg text-meta leading-relaxed text-pretty text-muted-foreground">
+              Check your name, then start. Your time zone is already detected
+              and everything else has a sensible default you can change later.
             </p>
           </div>
 
