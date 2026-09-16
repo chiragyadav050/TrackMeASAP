@@ -166,8 +166,22 @@ export function CalendarBoard({
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-3 lg:col-span-2" aria-busy={isPending}>
+      {/*
+        `grid-cols-1` IS NOT REDUNDANT, and leaving it out was the bug.
+
+        Without an explicit column at this breakpoint the grid falls back to a
+        single IMPLICIT column sized `auto`, which refuses to shrink below its
+        content. Tailwind's `grid-cols-*` expands to `minmax(0, 1fr)` — the
+        `0` is the whole point — so naming it here is what lets the column get
+        narrower than the widest event title inside it.
+
+        Until it did, one long title pushed the column past the viewport and
+        scrolled the page sideways on a 320px screen, clipping the day cards.
+        Every `truncate` further down was powerless: the column had already
+        grown to fit the untruncated text before they were consulted.
+      */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="min-w-0 space-y-3 lg:col-span-2" aria-busy={isPending}>
           {view.totalEntries === 0 ? (
             <div className="rounded-xl border border-border bg-surface">
               <EmptyState

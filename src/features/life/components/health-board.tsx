@@ -79,7 +79,7 @@ export function HealthBoard({
         description="Sleep, movement and energy — the inputs to everything else. Every field is optional."
       />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           title="Today's check-in"
           icon={HeartPulse}
@@ -93,7 +93,7 @@ export function HealthBoard({
           <form action={formAction} className="space-y-4 p-4" noValidate>
             <input type="hidden" name="checkInDate" value={todayKey} />
 
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field id="mood" label="Mood" errors={fieldErrors?.mood}>
                 <NativeSelect
                   {...fieldAria("mood", {})}

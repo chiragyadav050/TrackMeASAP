@@ -101,7 +101,7 @@ export function HabitBoard({ habits }: { habits: readonly HabitDto[] }) {
         </div>
       ) : (
         <ul
-          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
           aria-busy={isPending}
         >
           {habits.map((habit) => (

@@ -72,7 +72,7 @@ export function GoalBoard({ goals }: { goals: readonly GoalDto[] }) {
           />
         </div>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {goals.map((goal) => (
             <li key={goal.id}>
               <Link
@@ -236,7 +236,7 @@ function GoalDialog({
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field id="category" label="Area" errors={fieldErrors?.category}>
               <NativeSelect
                 {...fieldAria("category", {})}

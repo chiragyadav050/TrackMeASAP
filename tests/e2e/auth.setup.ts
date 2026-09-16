@@ -161,5 +161,23 @@ setup("authenticate", async ({ page }) => {
   await page.goto("/today");
   await expect(page).not.toHaveURL(/sign-in|onboarding/);
 
+  // DISMISS THE FIRST-RUN TOUR, once, here.
+  //
+  // The account is reset at the start of every run, so without this the tour
+  // is open on every one of the 124 specs — and its panel is deliberately
+  // clickable, so it sits over real controls and swallows their clicks. That
+  // is correct behaviour for a coach mark and completely wrong as a permanent
+  // condition for a test suite that is not testing the tour.
+  //
+  // Skipping is a real user action that stamps `tourCompletedAt` on the
+  // profile, so this is not a mock: it puts the account in the state every
+  // other spec assumes — someone who has already seen the tour.
+  const skipTour = page.getByRole("button", { name: "Skip", exact: true });
+
+  if (await skipTour.isVisible({ timeout: 10_000 }).catch(() => false)) {
+    await skipTour.click();
+    await expect(skipTour).toBeHidden();
+  }
+
   await page.context().storageState({ path: STORAGE_STATE });
 });

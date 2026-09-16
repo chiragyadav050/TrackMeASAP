@@ -77,7 +77,7 @@ export function WorkOverview({ view }: { view: WorkOverviewDto }) {
       ) : (
         <>
           {view.blockedProjects.length > 0 || view.atRiskProjects.length > 0 ? (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {view.blockedProjects.length > 0 ? (
                 <SectionCard
                   title="Blocked"
@@ -145,7 +145,7 @@ export function WorkOverview({ view }: { view: WorkOverviewDto }) {
               </h2>
             </div>
 
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {view.workspaces.map((workspace) => (
                 <li key={workspace.id}>
                   <Link
@@ -198,7 +198,7 @@ export function WorkOverview({ view }: { view: WorkOverviewDto }) {
                 />
               </div>
             ) : (
-              <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {view.projects.slice(0, 6).map((project) => (
                   <li key={project.id}>
                     <ProjectCard project={project} />

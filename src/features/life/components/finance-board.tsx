@@ -94,7 +94,7 @@ export function FinanceBoard({
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <figure className="rounded-xl border border-border bg-surface p-4">
           <figcaption className="text-label text-muted-foreground">
             Income
@@ -128,7 +128,7 @@ export function FinanceBoard({
         </figure>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           title="This month"
           icon={Wallet}
@@ -384,7 +384,7 @@ function EntryDialog({
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field id="amount" label="Amount" errors={fieldErrors?.amount}>
               <Input
                 {...fieldAria("amount", {

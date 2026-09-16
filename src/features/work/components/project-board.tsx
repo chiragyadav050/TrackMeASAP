@@ -231,7 +231,7 @@ export function ProjectBoard({
             />
           </div>
         ) : (
-          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               // `min-w-0` because a GRID ITEM defaults to `min-width: auto`,
               // which means "at least as wide as my content". A long project

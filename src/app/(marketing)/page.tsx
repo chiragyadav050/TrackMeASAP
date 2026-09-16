@@ -90,7 +90,7 @@ export default function LandingPage() {
               What Life OS will hold
             </h2>
 
-            <dl className="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2">
+            <dl className="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
               {NAV_GROUPS.map((group) => (
                 <div key={group.id} className="space-y-1.5">
                   <dt className="text-meta font-medium">{group.label}</dt>

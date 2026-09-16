@@ -18,7 +18,7 @@ export default function AppLoading() {
         <Skeleton className="h-4 w-full max-w-md" />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Skeleton className="h-72 rounded-xl lg:col-span-2 lg:row-span-2" />
         <Skeleton className="h-34 rounded-xl" />
         <Skeleton className="h-34 rounded-xl" />

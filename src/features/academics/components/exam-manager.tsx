@@ -183,7 +183,7 @@ export function ExamManager({
           />
         </div>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {exams.map((exam) => (
             <li key={exam.id}>
               <Link
@@ -339,7 +339,7 @@ function ExamDialog({
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field id="type" label="Type" errors={fieldErrors?.type}>
               <NativeSelect
                 {...fieldAria("type", { hasError: Boolean(fieldErrors?.type) })}

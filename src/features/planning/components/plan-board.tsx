@@ -180,7 +180,7 @@ export function PlanBoard({
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           title="Today's plan"
           icon={CalendarCheck}
@@ -340,7 +340,7 @@ export function PlanBoard({
           icon={CalendarCheck}
           description="The same arithmetic, run across Saturday and Sunday."
         >
-          <div className="grid gap-4 p-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
             {weekend.map((day) => (
               <div key={day.dayKey}>
                 <p className="text-label font-medium text-muted-foreground">

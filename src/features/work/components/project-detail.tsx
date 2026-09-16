@@ -253,7 +253,7 @@ export function ProjectDetail({
         ) : null}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ProjectTaskPanel projectId={project.id} tasks={tasks} />
         <MilestonePanel projectId={project.id} milestones={milestones} />
         <BlockerPanel projectId={project.id} blockers={blockers} />

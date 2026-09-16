@@ -90,14 +90,19 @@
 
   /* A scale with real contrast at the top and tight steps in the body range,
      so a dashboard can be dense without becoming flat. */
-  --text-display: 3.25rem;
-  --text-display--line-height: 1.02;
+  /* FLUID, not fixed. A 3.25rem display line is right on a laptop and absurd
+     on a 320px phone, where it also overflows outright — briefly, while the
+     serif is still swapping in, which is exactly long enough to scroll the
+     page sideways on load. `clamp` gives the large screen its scale contrast
+     and the small screen a size that fits. */
+  --text-display: clamp(2.25rem, 1.6rem + 2.8vw, 3.25rem);
+  --text-display--line-height: 1.04;
   --text-display--letter-spacing: -0.028em;
   /* The page-title step. Deliberately a long way below display and a long way
      above heading: the jump is what creates hierarchy without boxing every
      section in a card. */
-  --text-title: 2rem;
-  --text-title--line-height: 1.12;
+  --text-title: clamp(1.5rem, 1.2rem + 1.4vw, 2rem);
+  --text-title--line-height: 1.14;
   --text-title--letter-spacing: -0.02em;
   --text-heading: 1.0625rem;
   --text-heading--line-height: 1.35;

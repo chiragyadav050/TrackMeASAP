@@ -152,7 +152,7 @@ export function OnboardingForm({ profile }: OnboardingFormProps) {
           />
         </summary>
 
-        <div className="grid gap-5 border-t border-border-subtle p-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 border-t border-border-subtle p-4 sm:grid-cols-2">
           <Field
             id="timeZone"
             label="Time zone"

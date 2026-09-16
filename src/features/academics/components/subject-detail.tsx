@@ -81,7 +81,7 @@ export function SubjectDetail({ view }: { view: SubjectDetailView }) {
         </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <AttendancePanel attendance={attendance} subjectId={subject.id} />
 
         <SectionCard title="Study" icon={Timer}>

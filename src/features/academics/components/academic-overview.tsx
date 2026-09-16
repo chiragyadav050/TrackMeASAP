@@ -107,7 +107,7 @@ export function AcademicOverview({ view }: { view: AcademicOverviewDto }) {
         ) : null}
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           icon={Library}
           label="Subjects"
@@ -171,7 +171,7 @@ export function AcademicOverview({ view }: { view: AcademicOverviewDto }) {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           title="What needs attention"
           icon={Sparkles}

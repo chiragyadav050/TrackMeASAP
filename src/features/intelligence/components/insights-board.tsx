@@ -110,7 +110,7 @@ export function InsightsBoard({ report }: { report: IntelligenceReport }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           title="Life score"
           icon={Gauge}
@@ -241,7 +241,7 @@ export function InsightsBoard({ report }: { report: IntelligenceReport }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {report.patterns.length > 0 ? (
           <SectionCard
             title="Patterns"

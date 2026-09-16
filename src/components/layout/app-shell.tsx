@@ -61,9 +61,22 @@ export function AppShell({
               unreadCount={unreadCount}
             />
 
+            {/*
+              `min-w-0` is load-bearing, and its absence was an
+              application-wide bug rather than a calendar one.
+
+              A FLEX ITEM DEFAULTS TO `min-width: auto` — "never shrink below
+              my content" — so this column could not get narrower than the
+              widest thing any page put inside it. One long event title or task
+              name pushed main past the viewport and scrolled EVERY page
+              sideways on a phone, clipping content at the right edge. Each
+              `truncate` and `min-w-0` further down was powerless, because the
+              column had already grown to fit the untruncated text before they
+              were consulted.
+            */}
             <main
               id="main-content"
-              className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8"
+              className="min-w-0 flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8"
             >
               <div className="mx-auto w-full max-w-6xl">{children}</div>
             </main>
